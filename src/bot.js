@@ -5,7 +5,11 @@ const {
   Browsers,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
+//const path = require('path');
 const path = require('path');
+const fs = require('fs');
+const pino = require('pino');
+const { Boom } = require('@hapi/boom');
 async function startBot(phoneNumber, socket) {
   const userAuthFolder = path.join(process.cwd(), 'auth_info', phoneNumber);
 
