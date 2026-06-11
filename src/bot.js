@@ -6,10 +6,22 @@ const {
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 //const path = require('path');
+const { Boom } = require('@hapi/boom');
+const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const pino = require('pino');
-const { Boom } = require('@hapi/boom');
+const sharp = require('sharp');
+
+const AUTH_FOLDER = path.join(__dirname, '../../auth_info');
+const connections = new Map();
+const warnings = new Map();
+const startTime = Date.now();
+const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
+
+//const path = require('path');
+//const fs = require('fs');
+//const pino = require('pino');
+//const { Boom } = require('@hapi/boom');
 async function startBot(phoneNumber, socket) {
   const userAuthFolder = path.join(process.cwd(), 'auth_info', phoneNumber);
 
