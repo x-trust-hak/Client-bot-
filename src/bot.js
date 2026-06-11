@@ -1,67 +1,84 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const pino = require('pino');
-const path = require('path');
-const fs = require('fs');
-const sharp = require('sharp');
-
-const AUTH_FOLDER = path.join(__dirname, '../../auth_info');
-const connections = new Map();
-const warnings = new Map();
-const startTime = Date.now();
-const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
+const {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  Browsers,
+  fetchLatestBaileysVersion
+} = require('@whiskeysockets/baileys');
 
 async function startBot(phoneNumber, socket) {
-    const userAuthFolder = path.join(AUTH_FOLDER, phoneNumber);
+  const userAuthFolder = path.join(process.cwd(), 'auth_info', phoneNumber);
 
-    if (!fs.existsSync(userAuthFolder)) {
-        fs.mkdirSync(userAuthFolder, { recursive: true });
+  if (!fs.existsSync(userAuthFolder)) {
+    fs.mkdirSync(userAuthFolder, { recursive: true });
+  }
+
+  const { state, saveCreds } =
+    await useMultiFileAuthState(userAuthFolder);
+
+  const { version } =
+    await fetchLatestBaileysVersion();
+
+  const conn = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    browser: Browsers.ubuntu('Chrome'),
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
+  });
+
+  connections.set(phoneNumber, conn);
+
+  // Request pairing code BEFORE open
+  if (!conn.authState.creds.registered && phoneNumber) {
+    setTimeout(async () => {
+      try {
+        let code = await conn.requestPairingCode(phoneNumber);
+
+        code =
+          code?.match(/.{1,4}/g)?.join('-') || code;
+
+        socket.emit('pairing-code', code);
+
+        console.log('Pairing code:', code);
+      } catch (err) {
+        console.error(err);
+      }
+    }, 3000);
+  }
+
+  conn.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+
+    if (connection === 'close') {
+      const reason =
+        new Boom(lastDisconnect?.error)?.output
+          ?.statusCode;
+
+      console.log(
+        'Disconnected reason:',
+        reason
+      );
+
+      if (reason !== DisconnectReason.loggedOut) {
+        setTimeout(() => {
+          startBot(phoneNumber, socket);
+        }, 5000);
+      }
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(userAuthFolder);
+    if (connection === 'open') {
+      console.log('WhatsApp connected');
+      socket.emit(
+        'connected',
+        'WhatsApp connected successfully'
+      );
+    }
+  });
 
- const { Browsers } = require('@whiskeysockets/baileys');
-
-const conn = makeWASocket({
-    auth: state,
-    printQRInTerminal: false,
-    logger: pino({ level: 'silent' }),
-    browser: Browsers.windows('Chrome'),
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
-});
-    connections.set(phoneNumber, conn);
-
-    conn.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-
-        if (connection === 'close') {
-            const shouldReconnect = (new Boom(lastDisconnect?.error))?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log('Connection closed, reconnecting...');
-                startBot(phoneNumber, socket);
-            } else {
-                console.log('Logged out, not reconnecting');
-                connections.delete(phoneNumber);
-                socket.emit('logged-out', 'You have been logged out');
-            }
-        } else if (connection === 'open') {
-            console.log('WhatsApp connected!');
-            socket.emit('connected', 'WhatsApp connected successfully');
-            if (!conn.authState.creds.registered) {
-                try {
-                    const code = await conn.requestPairingCode(phoneNumber);
-                    socket.emit('pairing-code', code);
-                    console.log('Pairing code sent:', code);
-                } catch (err) {
-                    console.error('Failed to get pairing code:', err);
-                    socket.emit('error', 'Failed to get pairing code');
-                }
-            }
-        }
-    });
-
-    conn.ev.on('creds.update', saveCreds);
+  conn.ev.on('creds.update', saveCreds);
 
     conn.ev.on('messages.upsert', async ({ messages }) => {
         const msg = messages[0];
