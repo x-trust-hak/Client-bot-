@@ -5,7 +5,7 @@ const {
   Browsers,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
-
+const path = require('path');
 async function startBot(phoneNumber, socket) {
   const userAuthFolder = path.join(process.cwd(), 'auth_info', phoneNumber);
 
