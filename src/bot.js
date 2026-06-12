@@ -194,9 +194,22 @@ conn.decodeJid = (jid) => {
    */
   conn.ev.on('creds.update', saveCreds);
   
-  
+  conn.ev.on("messages.upsert", async (chatUpdate) => {
+    try {
+        console.log("📩 Message received");
 
- conn.ev.on('messages.upsert', async (chatUpdate) => {
+        let m = chatUpdate.messages[0];
+        if (!m.message) return;
+
+        m = smsg(conn, m);
+
+        await require("./case")(conn, m, chatUpdate);
+    } catch (err) {
+        console.log(err);
+    }
+});
+
+/* conn.ev.on('messages.upsert', async (chatUpdate) => {
    console.log("📩 Message received");
    try {
         let m = chatUpdate.messages[0];
@@ -213,7 +226,7 @@ conn.decodeJid = (jid) => {
     } catch (err) {
         console.log(err);
     }
-});
+});*/
 
 console.log("✅ messages.upsert listener registered");
 
