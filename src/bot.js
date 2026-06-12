@@ -5,36 +5,55 @@ const {
   Browsers,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
-//const path = require('path');
+
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
 
+// Folder where WhatsApp sessions are stored
 const AUTH_FOLDER = path.join(__dirname, '../../auth_info');
+
+// Store active connections
 const connections = new Map();
+
+// Store warnings for group moderation
 const warnings = new Map();
+
+// Track bot uptime
 const startTime = Date.now();
+
+// Owner JID
 const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
 
-//const path = require('path');
-//const fs = require('fs');
-//const pino = require('pino');
-//const { Boom } = require('@hapi/boom');
+/**
+ * Start a WhatsApp session for a user
+ * @param {string} phoneNumber
+ * @param {object} socket
+ */
 async function startBot(phoneNumber, socket) {
-  const userAuthFolder = path.join(process.cwd(), 'auth_info', phoneNumber);
+
+  // Create unique session folder for each phone number
+  const userAuthFolder = path.join(
+    process.cwd(),
+    'auth_info',
+    phoneNumber
+  );
 
   if (!fs.existsSync(userAuthFolder)) {
     fs.mkdirSync(userAuthFolder, { recursive: true });
   }
 
+  // Load or create authentication state
   const { state, saveCreds } =
     await useMultiFileAuthState(userAuthFolder);
 
+  // Fetch latest supported WhatsApp Web version
   const { version } =
     await fetchLatestBaileysVersion();
 
+  // Create WhatsApp socket connection
   const conn = makeWASocket({
     version,
     auth: state,
@@ -45,48 +64,91 @@ async function startBot(phoneNumber, socket) {
     defaultQueryTimeoutMs: 60000
   });
 
+  // Save active connection
   connections.set(phoneNumber, conn);
 
-  // Request pairing code BEFORE open
+  /**
+   * Generate pairing code
+   * Only runs if account isn't already linked
+   */
   if (!conn.authState.creds.registered && phoneNumber) {
     setTimeout(async () => {
       try {
-        let code = await conn.requestPairingCode(phoneNumber);
+        let code =
+          await conn.requestPairingCode(phoneNumber);
 
+        // Format code: XXXX-XXXX
         code =
           code?.match(/.{1,4}/g)?.join('-') || code;
 
+        // Send pairing code to frontend
         socket.emit('pairing-code', code);
 
         console.log('Pairing code:', code);
+
       } catch (err) {
-        console.error(err);
+        console.error(
+          'Failed to generate pairing code:',
+          err
+        );
       }
     }, 3000);
   }
 
+  /**
+   * Connection status updates
+   */
   conn.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+    const {
+      connection,
+      lastDisconnect
+    } = update;
 
+    // Handle disconnects
     if (connection === 'close') {
+
       const reason =
-        new Boom(lastDisconnect?.error)?.output
-          ?.statusCode;
+        new Boom(lastDisconnect?.error)
+          ?.output?.statusCode;
 
       console.log(
         'Disconnected reason:',
         reason
       );
 
+      // Reconnect unless logged out
       if (reason !== DisconnectReason.loggedOut) {
+
+        console.log(
+          'Attempting reconnection in 5 seconds...'
+        );
+
         setTimeout(() => {
           startBot(phoneNumber, socket);
         }, 5000);
+
+      } else {
+
+        console.log(
+          'User logged out. Stopping reconnect.'
+        );
+
+        connections.delete(phoneNumber);
+
+        socket.emit(
+          'logged-out',
+          'WhatsApp session logged out'
+        );
       }
     }
 
+    // Connection successful
     if (connection === 'open') {
-      console.log('WhatsApp connected');
+
+      console.log(
+        `WhatsApp connected for ${phoneNumber}`
+      );
+
       socket.emit(
         'connected',
         'WhatsApp connected successfully'
@@ -94,174 +156,107 @@ async function startBot(phoneNumber, socket) {
     }
   });
 
+  /**
+   * Save updated credentials automatically
+   */
   conn.ev.on('creds.update', saveCreds);
-
-    conn.ev.on('messages.upsert', async ({ messages }) => {
+  
+  
+/* COMMANDS */
+  
+conn.ev.on('messages.upsert', async ({ messages }) => {
+    try {
         const msg = messages[0];
         if (!msg.message || msg.key.fromMe) return;
 
         const from = msg.key.remoteJid;
-        const isGroup = from.endsWith('@g.us');
 
-        const body = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        const body =
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            msg.message?.imageMessage?.caption ||
+            msg.message?.videoMessage?.caption ||
+            '';
+
         const prefix = '.';
+
         if (!body.startsWith(prefix)) return;
 
-        const args = body.slice(prefix.length).trim().split(' ');
+        const args = body.slice(prefix.length).trim().split(/ +/);
         const command = args.shift().toLowerCase();
-        const sender = isGroup ? msg.key.participant : from;
 
-        if (isGroup) {
-            const groupMetadata = await conn.groupMetadata(from);
-            const groupAdmins = groupMetadata.participants
-                .filter(p => p.admin)
-                .map(p => p.id);
-            const isAdmin = groupAdmins.includes(sender);
+        switch (command) {
 
-            if (command === 'kick') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                const target = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                await conn.groupParticipantsUpdate(from, [target], 'remove');
-                await conn.sendMessage(from, { text: `👢 CYPHER XD has kicked @${args[0]?.replace(/[^0-9]/g, '')} out of the group!`, mentions: [target] });
+            case "ping":
+                await conn.sendMessage(from, {
+                    text: "🏓 Pong! Bot is alive."
+                });
+                break;
 
-            } else if (command === 'warn') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                const target = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                warnings.set(target, (warnings.get(target) || 0) + 1);
-                const count = warnings.get(target);
-                await conn.sendMessage(from, { text: `⚔️ CYPHER XD has warned @${args[0]?.replace(/[^0-9]/g, '')}! (${count}/3) — Watch yourself.`, mentions: [target] });
-                if (count >= 3) {
-                    await conn.groupParticipantsUpdate(from, [target], 'remove');
-                    await conn.sendMessage(from, { text: `🔨 CYPHER XD has auto-kicked @${args[0]?.replace(/[^0-9]/g, '')} after 3 warnings. Goodbye! 👋`, mentions: [target] });
-                    warnings.delete(target);
-                }
+            case "time":
+                await conn.sendMessage(from, {
+                    text: `🕐 ${new Date().toLocaleString()}`
+                });
+                break;
 
-            } else if (command === 'unwarn') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                const target = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                if (warnings.has(target)) {
-                    warnings.set(target, warnings.get(target) - 1);
-                    if (warnings.get(target) <= 0) warnings.delete(target);
-                }
-                await conn.sendMessage(from, { text: `🛡️ CYPHER XD has removed a warning from @${args[0]?.replace(/[^0-9]/g, '')}. Consider yourself lucky!`, mentions: [target] });
+            case "reverse":
+                await conn.sendMessage(from, {
+                    text: args.join(" ").split("").reverse().join("")
+                });
+                break;
 
-            } else if (command === 'ban') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                const target = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                await conn.groupParticipantsUpdate(from, [target], 'remove');
-                await conn.sendMessage(from, { text: `🔨 CYPHER XD has banned @${args[0]?.replace(/[^0-9]/g, '')} from the group. You are not welcome here!`, mentions: [target] });
-
-            } else if (command === 'delete') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                if (msg.message?.extendedTextMessage?.contextInfo?.stanzaId) {
-                    await conn.sendMessage(from, { delete: { remoteJid: from, id: msg.message.extendedTextMessage.contextInfo.stanzaId, participant: msg.message.extendedTextMessage.contextInfo.participant } });
-                    await conn.sendMessage(from, { text: `🗑️ CYPHER XD has deleted that message. It never existed!` });
-                }
-
-            } else if (command === 'mute') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                await conn.groupSettingUpdate(from, 'announcement');
-                await conn.sendMessage(from, { text: '🔇 CYPHER XD has muted the group. Silence is golden! 🤫' });
-
-            } else if (command === 'unmute') {
-                if (!isAdmin) return conn.sendMessage(from, { text: '❌ Only admins can use this command.' });
-                await conn.groupSettingUpdate(from, 'not_announcement');
-                await conn.sendMessage(from, { text: '🔊 CYPHER XD has unmuted the group. You may speak! 🎉' });
-
-            } else if (command === 'getpp') {
-                const target = args[0]?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-                try {
-                    const ppUrl = await conn.profilePictureUrl(target, 'image');
-                    await conn.sendMessage(from, { image: { url: ppUrl }, caption: `🖼️ CYPHER XD fetched @${args[0]?.replace(/[^0-9]/g, '')}'s profile picture!`, mentions: [target] });
-                } catch {
-                    await conn.sendMessage(from, { text: `❌ CYPHER XD couldn't fetch @${args[0]?.replace(/[^0-9]/g, '')}'s profile picture. They might have it hidden! 🙈`, mentions: [target] });
-                }
-
-            } else if (command === 'help') {
-                await conn.sendMessage(from, { text: `*📋 CYPHER XD Command Menu*\n\n👢 .kick @user — Kick a member\n⚔️ .warn @user — Warn a member (auto-kick at 3)\n🛡️ .unwarn @user — Remove a warning\n🔨 .ban @user — Ban a member\n🗑️ .delete — Reply to a message to delete it\n🔇 .mute — Mute the group\n🔊 .unmute — Unmute the group\n🖼️ .getpp @user — Fetch a member's profile picture\n📋 .help — Show this menu` });
-            }
-
-        } else {
-
-            if (command === 'ping') {
-                await conn.sendMessage(from, { text: '🏓 Pong! CYPHER XD is alive and active!' });
-
-            } else if (command === 'time') {
-                const now = new Date();
-                await conn.sendMessage(from, { text: `🕐 Current time: *${now.toLocaleString()}*` });
-
-            } else if (command === 'reverse') {
-                const text = args.join(' ');
-                await conn.sendMessage(from, { text: `🔄 ${text.split('').reverse().join('')}` });
-
-            } else if (command === 'quote') {
+            case "quote":
                 const quotes = [
-                    "The only way to do great work is to love what you do. — Steve Jobs",
-                    "In the middle of every difficulty lies opportunity. — Albert Einstein",
-                    "It does not matter how slowly you go as long as you do not stop. — Confucius",
-                    "Success is not final, failure is not fatal. — Winston Churchill",
-                    "Believe you can and you're halfway there. — Theodore Roosevelt",
-                    "Code is like humor. When you have to explain it, it's bad. — Cory House",
-                    "SEE IT, TOUCH IT, OBTAIN IT. — CYPHER XD 👑"
+                    "Success is not final.",
+                    "Failure is not fatal.",
+                    "Keep moving forward.",
+                    "Code. Learn. Improve."
                 ];
-                const random = quotes[Math.floor(Math.random() * quotes.length)];
-                await conn.sendMessage(from, { text: `💬 *Quote of the moment:*\n\n_${random}_` });
 
-            } else if (command === 'bio') {
-                try {
-                    const status = await conn.fetchStatus(from);
-                    await conn.sendMessage(from, { text: `📝 *Your bio:*\n\n_${status?.status || 'No bio set'}_` });
-                } catch {
-                    await conn.sendMessage(from, { text: '❌ Could not fetch your bio.' });
-                }
+                await conn.sendMessage(from, {
+                    text: quotes[Math.floor(Math.random() * quotes.length)]
+                });
+                break;
 
-            } else if (command === 'getpp') {
-                try {
-                    const ppUrl = await conn.profilePictureUrl(from, 'image');
-                    await conn.sendMessage(from, { image: { url: ppUrl }, caption: '🖼️ Here is your profile picture!' });
-                } catch {
-                    await conn.sendMessage(from, { text: '❌ Could not fetch your profile picture. It might be hidden!' });
-                }
+            case "runtime":
+                const uptime = process.uptime();
 
-            } else if (command === 'sticker') {
-                const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-                const imageMsg = quoted?.imageMessage || msg.message?.imageMessage;
-                if (!imageMsg) return conn.sendMessage(from, { text: '❌ Please send or reply to an image with .sticker' });
-                try {
-                    const stream = await conn.downloadMediaMessage({ message: { imageMessage: imageMsg }, key: msg.key });
-                    const buffer = await sharp(stream).webp().toBuffer();
-                    await conn.sendMessage(from, { sticker: buffer });
-                } catch {
-                    await conn.sendMessage(from, { text: '❌ Failed to convert image to sticker.' });
-                }
+                const hours = Math.floor(uptime / 3600);
+                const mins = Math.floor((uptime % 3600) / 60);
+                const secs = Math.floor(uptime % 60);
 
-            } else if (command === 'toimage') {
-                const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-                const stickerMsg = quoted?.stickerMessage || msg.message?.stickerMessage;
-                if (!stickerMsg) return conn.sendMessage(from, { text: '❌ Please reply to a sticker with .toimage' });
-                try {
-                    const stream = await conn.downloadMediaMessage({ message: { stickerMessage: stickerMsg }, key: msg.key });
-                    const buffer = await sharp(stream).png().toBuffer();
-                    await conn.sendMessage(from, { image: buffer, caption: '🖼️ Here is your image!' });
-                } catch {
-                    await conn.sendMessage(from, { text: '❌ Failed to convert sticker to image.' });
-                }
+                await conn.sendMessage(from, {
+                    text: `⏱️ Runtime: ${hours}h ${mins}m ${secs}s`
+                });
+                break;
 
-            } else if (command === 'owner') {
-                await conn.sendMessage(from, { text: `👑 *Bot Owner*\n\nName: CYPHER XD\nContact: wa.me/${process.env.OWNER_NUMBER}` });
+            case "owner":
+                await conn.sendMessage(from, {
+                    text: `👑 Owner: wa.me/${process.env.OWNER_NUMBER}`
+                });
+                break;
 
-            } else if (command === 'runtime') {
-                const uptime = Date.now() - startTime;
-                const seconds = Math.floor((uptime / 1000) % 60);
-                const minutes = Math.floor((uptime / (1000 * 60)) % 60);
-                const hours = Math.floor((uptime / (1000 * 60 * 60)) % 24);
-                await conn.sendMessage(from, { text: `⏱️ *CYPHER XD has been running for:*\n\n${hours}h ${minutes}m ${seconds}s` });
+            case "help":
+                await conn.sendMessage(from, {
+                    text: `
+📋 COMMANDS
 
-            } else if (command === 'help') {
-                await conn.sendMessage(from, { text: `*📋 CYPHER XD DM Commands*\n\n🏓 .ping — Check if bot is alive\n🕐 .time — Get current time\n🔄 .reverse [text] — Reverse your text\n💬 .quote — Get a random quote\n📝 .bio — See your WhatsApp bio\n🖼️ .getpp — See your profile picture\n🎭 .sticker — Convert image to sticker\n🖼️ .toimage — Convert sticker to image\n👑 .owner — Bot owner info\n⏱️ .runtime — How long bot has been running` });
-            }
+.ping
+.time
+.reverse text
+.quote
+.runtime
+.owner
+.help
+                    `
+                });
+                break;
         }
-    });
+
+    } catch (err) {
+        console.log(err);
+    }
+});
 
     conn.ev.on('group-participants.update', async (update) => {
         const { id, participants, action } = update;
