@@ -96,7 +96,7 @@ conn.decodeJid = (jid) => {
 
   // Save active connection
   connections.set(phoneNumber, conn);
-
+console.log("Active sessions:", [...connections.keys()]);
   /**
    * Generate pairing code
    * Only runs if account isn't already linked
