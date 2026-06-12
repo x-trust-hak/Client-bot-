@@ -33,7 +33,7 @@ const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
  * @param {object} socket
  */
 async function startBot(phoneNumber, socket) {
-
+console.log("startBot called:", phoneNumber);
   // Create unique session folder for each phone number
   const userAuthFolder = path.join(
     process.cwd(),
