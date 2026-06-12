@@ -115,7 +115,7 @@ conn.decodeJid = (jid) => {
   /**
    * Connection status updates
    */
-  /*conn.ev.on('connection.update', async (update) => {
+  conn.ev.on('connection.update', async (update) => {
     const {
       connection,
       lastDisconnect
@@ -171,45 +171,16 @@ conn.decodeJid = (jid) => {
         'WhatsApp connected successfully'
       );
     }
-  });*/
-  conn.ev.on("connection.update", (update) => {
-  console.log(update);
-
-  const { connection, lastDisconnect } = update;
-
-  if (connection === "open") {
-    console.log("✅ CONNECTED!");
-  }
-
-  if (connection === "close") {
-    console.log("❌ CLOSED");
-    console.log(lastDisconnect?.error);
-  }
-});
+  });
 
   /**
    * Save updated credentials automatically
    */
   conn.ev.on('creds.update', saveCreds);
   
-  conn.ev.on("messages.upsert", async (chatUpdate) => {
-    console.log("📩 Message received");
+  
 
-    try {
-        let m = chatUpdate.messages[0];
-        if (!m.message) return;
-
-        console.log(m);
-
-        m = smsg(conn, m);
-
-        require("./case")(conn, m, chatUpdate);
-    } catch (e) {
-        console.log(e);
-    }
-});
-
- /*conn.ev.on('messages.upsert', async (chatUpdate) => {
+ conn.ev.on('messages.upsert', async (chatUpdate) => {
     try {
         let m = chatUpdate.messages[0];
         if (!m.message) return;
@@ -225,7 +196,7 @@ conn.decodeJid = (jid) => {
     } catch (err) {
         console.log(err);
     }
-});*/
+});
 
 
 
@@ -346,4 +317,18 @@ function smsg(conn, m) {
         );
 
     return m;
-                 }
+}
+
+/*const file = require.resolve("./case.js");
+
+fs.watchFile(file, () => {
+    fs.unwatchFile(file);
+
+    console.log("Reloaded case.js");
+
+    delete require.cache[file];
+
+    require("./case");
+
+    fs.watchFile(file, () => {});
+});*/
