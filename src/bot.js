@@ -54,7 +54,7 @@ async function startBot(phoneNumber, socket) {
     await fetchLatestBaileysVersion();
 
   // Create WhatsApp socket connection
-  const conn = makeWASocket({
+  /*const conn = makeWASocket({
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
@@ -62,7 +62,22 @@ async function startBot(phoneNumber, socket) {
     browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000
-  });
+  });*/
+
+  const conn = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    browser: Browsers.ubuntu('Chrome'),
+    printQRInTerminal: false,
+
+    syncFullHistory: false,
+    markOnlineOnConnect: true,
+    generateHighQualityLinkPreview: true,
+
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
+});
 
   // Save active connection
   connections.set(phoneNumber, conn);
