@@ -176,7 +176,10 @@ async function startBot(phoneNumber, socket) {
    */
   conn.ev.on('creds.update', saveCreds);
   
-  
+  conn.ev.on('messages.upsert', ({ messages, type }) => {
+    console.log('UPSERT EVENT:', type);
+    console.log(JSON.stringify(messages[0], null, 2));
+});
 /* COMMANDS */
   
 conn.ev.on('messages.upsert', async ({ messages }) => {
