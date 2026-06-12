@@ -33,7 +33,7 @@ const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
  * @param {object} socket
  */
 async function startBot(phoneNumber, socket) {
-console.log("startBot called:", phoneNumber);
+
   // Create unique session folder for each phone number
   const userAuthFolder = path.join(
     process.cwd(),
@@ -54,30 +54,32 @@ console.log("startBot called:", phoneNumber);
     await fetchLatestBaileysVersion();
 
   // Create WhatsApp socket connection
-  /*const conn = makeWASocket({
-    version,
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    browser: Browsers.ubuntu('Chrome'),
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000
-  });*/
-
   const conn = makeWASocket({
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    browser: Browsers.ubuntu('Chrome'),
     printQRInTerminal: false,
-
-    syncFullHistory: false,
-    markOnlineOnConnect: true,
-    generateHighQualityLinkPreview: true,
-
+    browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000
-});
+  });
+  
+  const { jidDecode } = require("@whiskeysockets/baileys");
+
+conn.decodeJid = (jid) => {
+    if (!jid) return jid;
+
+    if (/:\d+@/gi.test(jid)) {
+        let decode = jidDecode(jid) || {};
+        return (
+            decode.user &&
+            decode.server &&
+            `${decode.user}@${decode.server}`
+        ) || jid;
+    }
+
+    return jid;
+};
 
   // Save active connection
   connections.set(phoneNumber, conn);
@@ -176,105 +178,27 @@ console.log("startBot called:", phoneNumber);
    */
   conn.ev.on('creds.update', saveCreds);
   
-  conn.ev.on('messages.upsert', ({ messages, type }) => {
-    console.log('UPSERT EVENT:', type);
-    console.log(JSON.stringify(messages[0], null, 2));
-});
-/* COMMANDS */
   
-conn.ev.on('messages.upsert', async ({ messages }) => {
+
+ conn.ev.on('messages.upsert', async (chatUpdate) => {
     try {
-        const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
+        let m = chatUpdate.messages[0];
+        if (!m.message) return;
 
-        const from = msg.key.remoteJid;
+        m = smsg(conn, m);
 
-        const body =
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
-            '';
+        // Ignore status broadcasts
+        if (m.from === 'status@broadcast') return;
 
-        const prefix = '.';
-
-        if (!body.startsWith(prefix)) return;
-
-        const args = body.slice(prefix.length).trim().split(/ +/);
-        const command = args.shift().toLowerCase();
-
-        switch (command) {
-
-            case "ping":
-                await conn.sendMessage(from, {
-                    text: "🏓 Pong! Bot is alive."
-                });
-                break;
-
-            case "time":
-                await conn.sendMessage(from, {
-                    text: `🕐 ${new Date().toLocaleString()}`
-                });
-                break;
-
-            case "reverse":
-                await conn.sendMessage(from, {
-                    text: args.join(" ").split("").reverse().join("")
-                });
-                break;
-
-            case "quote":
-                const quotes = [
-                    "Success is not final.",
-                    "Failure is not fatal.",
-                    "Keep moving forward.",
-                    "Code. Learn. Improve."
-                ];
-
-                await conn.sendMessage(from, {
-                    text: quotes[Math.floor(Math.random() * quotes.length)]
-                });
-                break;
-
-            case "runtime":
-                const uptime = process.uptime();
-
-                const hours = Math.floor(uptime / 3600);
-                const mins = Math.floor((uptime % 3600) / 60);
-                const secs = Math.floor(uptime % 60);
-
-                await conn.sendMessage(from, {
-                    text: `⏱️ Runtime: ${hours}h ${mins}m ${secs}s`
-                });
-                break;
-
-            case "owner":
-                await conn.sendMessage(from, {
-                    text: `👑 Owner: wa.me/${process.env.OWNER_NUMBER}`
-                });
-                break;
-
-            case "help":
-                await conn.sendMessage(from, {
-                    text: `
-📋 COMMANDS
-
-.ping
-.time
-.reverse text
-.quote
-.runtime
-.owner
-.help
-                    `
-                });
-                break;
-        }
+        // Load commands
+        require('./case')(conn, m, chatUpdate);
 
     } catch (err) {
         console.log(err);
     }
 });
+
+
 
     conn.ev.on('group-participants.update', async (update) => {
         const { id, participants, action } = update;
@@ -295,6 +219,116 @@ conn.ev.on('messages.upsert', async ({ messages }) => {
             }
         }
     });
+    
+
+
+
 }
 
 module.exports = { startBot };
+
+const {
+    proto,
+    getContentType
+} = require("@whiskeysockets/baileys");
+
+function smsg(conn, m) {
+    if (!m) return m;
+
+    if (m.key) {
+        m.id = m.key.id;
+        m.isGroup = m.key.remoteJid.endsWith("@g.us");
+        m.from = m.key.remoteJid;
+        m.sender = conn.decodeJid(
+            m.key.participant || m.key.remoteJid
+        );
+    }
+
+    if (m.message) {
+        m.mtype = getContentType(m.message);
+
+        m.msg =
+            m.mtype === "viewOnceMessage"
+                ? m.message[m.mtype].message[
+                      getContentType(m.message[m.mtype].message)
+                  ]
+                : m.message[m.mtype];
+
+        m.body =
+            m.mtype === "conversation"
+                ? m.message.conversation
+                : m.mtype === "imageMessage"
+                ? m.message.imageMessage.caption
+                : m.mtype === "videoMessage"
+                ? m.message.videoMessage.caption
+                : m.mtype === "extendedTextMessage"
+                ? m.message.extendedTextMessage.text
+                : "";
+
+        m.mentionedJid =
+            m.msg?.contextInfo?.mentionedJid || [];
+
+        let quoted =
+            (m.quoted = m.msg?.contextInfo?.quotedMessage
+                ? m.msg.contextInfo
+                : null);
+
+        if (quoted) {
+            let type = Object.keys(
+                quoted.quotedMessage
+            )[0];
+
+            m.quoted = quoted.quotedMessage[type];
+
+            if (typeof m.quoted === "string") {
+                m.quoted = { text: m.quoted };
+            }
+
+            m.quoted.mtype = type;
+            m.quoted.id = m.msg.contextInfo.stanzaId;
+            m.quoted.sender = conn.decodeJid(
+                m.msg.contextInfo.participant
+            );
+            m.quoted.fromMe =
+                m.quoted.sender ===
+                conn.decodeJid(conn.user.id);
+
+            m.quoted.text =
+                m.quoted.text ||
+                m.quoted.caption ||
+                m.quoted.conversation ||
+                "";
+
+            m.quoted.mentionedJid =
+                m.msg.contextInfo.mentionedJid || [];
+        }
+    }
+
+    m.reply = (text, chatId = m.from, options = {}) =>
+        conn.sendMessage(
+            chatId,
+            {
+                text,
+                ...options,
+            },
+            {
+                quoted: m,
+            }
+        );
+
+    return m;
+}
+
+const file = require.resolve("./case.js");
+
+fs.watchFile(file, () => {
+    fs.unwatchFile(file);
+
+    console.log("Reloaded case.js");
+
+    delete require.cache[file];
+
+    require("./case");
+
+    fs.watchFile(file, () => {});
+});
