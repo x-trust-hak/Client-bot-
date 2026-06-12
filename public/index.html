@@ -225,11 +225,24 @@
             status.textContent = 'Enter this code in WhatsApp > Linked Devices';
         });
 
-        socket.on('connected', (msg) => {
+        /*socket.on('connected', (msg) => {
             status.className = 'status success';
             status.textContent = '✅ WhatsApp Connected Successfully!';
             codeBox.style.display = 'none';
-        });
+        });*/
+        socket.on('connected', () => {
+    status.className = 'status success';
+    status.textContent =
+        '✅ WhatsApp Connected Successfully!';
+
+    codeBox.style.display = 'none';
+
+    // Allow another pairing
+    connectBtn.disabled = false;
+
+    // Optional: clear the input
+    phoneInput.value = "";
+});
 
         socket.on('logged-out', (msg) => {
             status.className = 'status error';
