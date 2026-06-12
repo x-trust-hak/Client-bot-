@@ -54,7 +54,7 @@ async function startBot(phoneNumber, socket) {
     await fetchLatestBaileysVersion();
 
   // Create WhatsApp socket connection
-  const conn = makeWASocket({
+/*  const conn = makeWASocket({
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
@@ -62,7 +62,20 @@ async function startBot(phoneNumber, socket) {
     browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000
-  });
+  });*/
+
+  // Create WhatsApp socket connection
+const conn = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    browser: Browsers.ubuntu('Chrome'),
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000
+});
+
+console.log("✅ Socket created");
   
   const { jidDecode } = require("@whiskeysockets/baileys");
 
@@ -115,6 +128,9 @@ conn.decodeJid = (jid) => {
   /**
    * Connection status updates
    */
+ /* conn.ev.on("connection.update", (update) => {
+    console.log("CONNECTION UPDATE:", JSON.stringify(update, null, 2));
+});*/
   conn.ev.on('connection.update', async (update) => {
     const {
       connection,
@@ -181,7 +197,8 @@ conn.decodeJid = (jid) => {
   
 
  conn.ev.on('messages.upsert', async (chatUpdate) => {
-    try {
+   console.log("📩 Message received");
+   try {
         let m = chatUpdate.messages[0];
         if (!m.message) return;
 
@@ -198,7 +215,7 @@ conn.decodeJid = (jid) => {
     }
 });
 
-
+console.log("✅ messages.upsert listener registered");
 
     conn.ev.on('group-participants.update', async (update) => {
         const { id, participants, action } = update;
