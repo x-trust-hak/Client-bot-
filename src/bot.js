@@ -255,7 +255,10 @@ console.log("✅ messages.upsert listener registered");
 
 }
 
-module.exports = { startBot };
+module.exports = {
+    startBot,
+    connections
+};
 
 const {
     proto,
