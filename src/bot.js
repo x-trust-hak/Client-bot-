@@ -1,6 +1,5 @@
 const {
   makeWASocket,
-  useMultiFileAuthState,
   DisconnectReason,
   Browsers,
   fetchLatestBaileysVersion
@@ -39,9 +38,55 @@ const connections = new Map();
 const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
 
 /**
+ * Restore all saved sessions from Redis on startup
+ * Called once when server starts
+ */
+async function restoreAllSessions() {
+  try {
+    const redisClient = await getRedis();
+
+    // Find all session keys in Redis
+    const keys = await redisClient.keys('session:*');
+
+    if (keys.length === 0) {
+      console.log('No saved sessions found in Redis');
+      return;
+    }
+
+    console.log(`🔄 Restoring ${keys.length} session(s) from Redis...`);
+
+    for (const key of keys) {
+      // Extract phone number from key e.g. "session:2347064578908" -> "2347064578908"
+      const phoneNumber = key.replace('session:', '');
+
+      // Check it has creds saved (not an empty/broken session)
+      const creds = await redisClient.hGet(key, 'creds');
+      if (!creds) {
+        console.log(`⚠️ Skipping ${phoneNumber} — no creds found`);
+        continue;
+      }
+
+      console.log(`♻️ Reconnecting ${phoneNumber}...`);
+
+      // Reconnect with a null socket (background reconnect, no frontend needed)
+      await startBot(phoneNumber, null).catch(err => {
+        console.error(`Failed to restore ${phoneNumber}:`, err.message);
+      });
+
+      // Small delay between each to avoid hammering WhatsApp
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    console.log('✅ Session restore complete');
+  } catch (err) {
+    console.error('Error restoring sessions:', err);
+  }
+}
+
+/**
  * Start a WhatsApp session for a user
  * @param {string} phoneNumber
- * @param {object} socket - Socket.IO socket
+ * @param {object|null} socket - Socket.IO socket (null for background restore)
  */
 async function startBot(phoneNumber, socket) {
 
@@ -84,8 +129,8 @@ async function startBot(phoneNumber, socket) {
   connections.set(phoneNumber, conn);
   console.log('Active sessions:', [...connections.keys()]);
 
-  // ── Generate pairing code ──────────────────────────────
-  if (!conn.authState.creds.registered && phoneNumber) {
+  // ── Generate pairing code (only for new sessions with a live socket) ──
+  if (!conn.authState.creds.registered && phoneNumber && socket) {
     setTimeout(async () => {
       try {
         let code = await conn.requestPairingCode(phoneNumber);
@@ -119,13 +164,13 @@ async function startBot(phoneNumber, socket) {
         // Delete session from Redis on logout
         await redisClient.del(`session:${phoneNumber}`);
 
-        socket.emit('logged-out', 'WhatsApp session logged out');
+        if (socket) socket.emit('logged-out', 'WhatsApp session logged out');
       }
     }
 
     if (connection === 'open') {
       console.log(`✅ WhatsApp connected for ${phoneNumber}`);
-      socket.emit('connected', 'WhatsApp connected successfully');
+      if (socket) socket.emit('connected', 'WhatsApp connected successfully');
     }
   });
 
@@ -137,7 +182,6 @@ async function startBot(phoneNumber, socket) {
     try {
       let m = chatUpdate.messages[0];
       if (!m.message) return;
-
       m = smsg(conn, m);
       await require('./case')(conn, m, chatUpdate);
     } catch (err) {
@@ -167,7 +211,7 @@ async function startBot(phoneNumber, socket) {
   });
 }
 
-module.exports = { startBot, connections };
+module.exports = { startBot, restoreAllSessions, connections };
 
 // ── smsg helper ───────────────────────────────────────────
 const { proto, getContentType } = require('@whiskeysockets/baileys');
@@ -219,4 +263,4 @@ function smsg(conn, m) {
     conn.sendMessage(chatId, { text, ...options }, { quoted: m });
 
   return m;
-                               }
+}
