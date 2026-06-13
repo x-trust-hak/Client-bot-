@@ -3,7 +3,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { startBot, connections } = require('./bot');
+const { startBot, restoreAllSessions, connections } = require('./bot');
 
 const app = express();
 const server = http.createServer(app);
@@ -11,10 +11,12 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, '../public')));
 
+// ── Restore all sessions when server starts ──
+restoreAllSessions();
+
 io.on('connection', (socket) => {
   console.log('Frontend connected');
 
-  // Push stats to this client every 3 seconds
   const statsInterval = setInterval(() => {
     socket.emit('stats', {
       active: connections.size,
