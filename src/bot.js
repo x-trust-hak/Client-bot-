@@ -37,15 +37,118 @@ const connections = new Map();
 // ── Owner ────────────────────────────────────────────────
 const OWNER_NUMBER = process.env.OWNER_NUMBER + '@s.whatsapp.net';
 
+// ── Dev contact / branding (used in welcome message) ──────
+const WELCOME_MESSAGE = `Successfully connected to *Lady Liya* 💓
+
+Type *.menu* to explore available commands.
+
+For any issues, contact the Dev:
+📞 wa.me/2349155604141
+✈️ t.me/KallmeTrust
+
+📢 Telegram channel:
+https://t.me/TrustBitOfficial`;
+
+// ── Admin event emitter (so server.js can broadcast live events) ──
+const { EventEmitter } = require('events');
+const adminEvents = new EventEmitter();
+
+// ════════════════════════════════════════════════════════
+// SETTINGS — stored as ONE Redis key, not per-user
+// ════════════════════════════════════════════════════════
+const SETTINGS_KEY = 'settings:config';
+
+const DEFAULT_SETTINGS = {
+  maxSlots: 100,
+  autoReconnect: true,
+  autoBackup: false,
+  pairTimeoutSeconds: 60,
+  maintenanceMode: false
+};
+
+let settingsCache = null;
+
+/**
+ * Get current settings (cached after first load)
+ */
+async function getSettings() {
+  if (settingsCache) return settingsCache;
+
+  try {
+    const redisClient = await getRedis();
+    const raw = await redisClient.get(SETTINGS_KEY);
+
+    if (!raw) {
+      settingsCache = { ...DEFAULT_SETTINGS };
+      await redisClient.set(SETTINGS_KEY, JSON.stringify(settingsCache));
+    } else {
+      settingsCache = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch (err) {
+    console.error('getSettings error:', err);
+    settingsCache = { ...DEFAULT_SETTINGS };
+  }
+
+  return settingsCache;
+}
+
+/**
+ * Update settings (partial update, merges with existing)
+ */
+async function updateSettings(updates) {
+  const redisClient = await getRedis();
+  const current = await getSettings();
+  const merged = { ...current, ...updates };
+
+  await redisClient.set(SETTINGS_KEY, JSON.stringify(merged));
+  settingsCache = merged;
+
+  return merged;
+}
+
+/**
+ * Log a global event to Redis for admin dashboard (pairings, disconnects, etc)
+ */
+async function logEvent(type, data = {}) {
+  try {
+    const redisClient = await getRedis();
+    const event = {
+      type,
+      ...data,
+      timestamp: Date.now()
+    };
+
+    // Push to a capped list of recent events (for live monitor + logs)
+    await redisClient.lPush('events:log', JSON.stringify(event));
+    await redisClient.lTrim('events:log', 0, 499); // keep last 500
+
+    // Emit for real-time admin dashboard updates
+    adminEvents.emit('event', event);
+
+    // Track pairing counters for analytics
+    if (type === 'paired') {
+      const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      await redisClient.incr(`stats:pairings:${dateKey}`);
+      await redisClient.incr('stats:pairings:total');
+    }
+  } catch (err) {
+    console.error('logEvent error:', err);
+  }
+}
+
 /**
  * Restore all saved sessions from Redis on startup
- * Called once when server starts
  */
 async function restoreAllSessions() {
   try {
-    const redisClient = await getRedis();
+    const settings = await getSettings();
 
-    // Find all session keys in Redis
+    if (!settings.autoReconnect) {
+      console.log('⏭️ Auto Reconnect is OFF — skipping session restore');
+      return;
+    }
+
+    const redisClient = await getRedis();
     const keys = await redisClient.keys('session:*');
 
     if (keys.length === 0) {
@@ -56,10 +159,7 @@ async function restoreAllSessions() {
     console.log(`🔄 Restoring ${keys.length} session(s) from Redis...`);
 
     for (const key of keys) {
-      // Extract phone number from key e.g. "session:2347064578908" -> "2347064578908"
       const phoneNumber = key.replace('session:', '');
-
-      // Check it has creds saved (not an empty/broken session)
       const creds = await redisClient.hGet(key, 'creds');
       if (!creds) {
         console.log(`⚠️ Skipping ${phoneNumber} — no creds found`);
@@ -67,13 +167,10 @@ async function restoreAllSessions() {
       }
 
       console.log(`♻️ Reconnecting ${phoneNumber}...`);
-
-      // Reconnect with a null socket (background reconnect, no frontend needed)
       await startBot(phoneNumber, null).catch(err => {
         console.error(`Failed to restore ${phoneNumber}:`, err.message);
       });
 
-      // Small delay between each to avoid hammering WhatsApp
       await new Promise(r => setTimeout(r, 2000));
     }
 
@@ -90,17 +187,34 @@ async function restoreAllSessions() {
  */
 async function startBot(phoneNumber, socket) {
 
-  // Get (or create) Redis connection
   const redisClient = await getRedis();
+  const settings = await getSettings();
 
-  // Load auth state from Redis
+  // ── Maintenance mode: block NEW pairings (socket present = user-initiated) ──
+  if (settings.maintenanceMode && socket && !connections.has(phoneNumber)) {
+    const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
+    if (!redisCheck) {
+      console.log(`🚧 Maintenance mode active — blocked new pairing for ${phoneNumber}`);
+      socket.emit('error', 'Server is in maintenance mode. New pairings are temporarily disabled.');
+      return;
+    }
+  }
+
+  // ── Slot limit: block NEW pairings if at capacity ──
+  if (socket && !connections.has(phoneNumber)) {
+    const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
+    if (!redisCheck && connections.size >= settings.maxSlots) {
+      console.log(`🔒 Slot limit reached (${settings.maxSlots}) — blocked ${phoneNumber}`);
+      socket.emit('error', `Server is full (${settings.maxSlots}/${settings.maxSlots} slots). Try again later.`);
+      return;
+    }
+  }
+
   const { state, saveCreds } =
     await useRedisAuthState(redisClient, phoneNumber);
 
-  // Fetch latest WhatsApp Web version
   const { version } = await fetchLatestBaileysVersion();
 
-  // Create WhatsApp socket
   const conn = makeWASocket({
     version,
     auth: state,
@@ -129,9 +243,15 @@ async function startBot(phoneNumber, socket) {
   connections.set(phoneNumber, conn);
   console.log('Active sessions:', [...connections.keys()]);
 
+  // Track whether this is a NEW pairing (not registered yet) for the welcome msg
+  const isNewPairing = !conn.authState.creds.registered;
+
   // ── Generate pairing code (only for new sessions with a live socket) ──
-  if (!conn.authState.creds.registered && phoneNumber && socket) {
-    setTimeout(async () => {
+  if (isNewPairing && phoneNumber && socket) {
+    const pairTimeoutMs = (settings.pairTimeoutSeconds || 60) * 1000;
+    const pairDelayMs = Math.min(3000, pairTimeoutMs); // small delay before requesting code
+
+    const codeTimeout = setTimeout(async () => {
       try {
         let code = await conn.requestPairingCode(phoneNumber);
         code = code?.match(/.{1,4}/g)?.join('-') || code;
@@ -141,7 +261,17 @@ async function startBot(phoneNumber, socket) {
         console.error('Failed to generate pairing code:', err);
         socket.emit('error', 'Failed to generate pairing code');
       }
-    }, 3000);
+    }, pairDelayMs);
+
+    // If the user doesn't complete pairing within the configured timeout, clean up
+    setTimeout(() => {
+      if (!conn.authState.creds.registered && connections.get(phoneNumber) === conn) {
+        console.log(`⏱️ Pair timeout for ${phoneNumber} — closing unused socket`);
+        connections.delete(phoneNumber);
+        try { conn.end(); } catch {}
+        if (socket) socket.emit('error', 'Pairing code expired. Please try again.');
+      }
+    }, pairTimeoutMs);
   }
 
   // ── Connection status ──────────────────────────────────
@@ -156,13 +286,20 @@ async function startBot(phoneNumber, socket) {
 
       if (reason !== DisconnectReason.loggedOut) {
         console.log(`Reconnecting ${phoneNumber} in 5s...`);
+        connections.delete(phoneNumber);
+
+        await logEvent('disconnected', { phoneNumber });
+        await redisClient.hSet(`meta:${phoneNumber}`, 'status', 'offline');
+
         setTimeout(() => startBot(phoneNumber, socket), 5000);
       } else {
         console.log(`${phoneNumber} logged out.`);
         connections.delete(phoneNumber);
 
-        // Delete session from Redis on logout
         await redisClient.del(`session:${phoneNumber}`);
+        await redisClient.del(`meta:${phoneNumber}`);
+
+        await logEvent('logged_out', { phoneNumber });
 
         if (socket) socket.emit('logged-out', 'WhatsApp session logged out');
       }
@@ -170,6 +307,37 @@ async function startBot(phoneNumber, socket) {
 
     if (connection === 'open') {
       console.log(`✅ WhatsApp connected for ${phoneNumber}`);
+
+      // Save/update metadata for admin dashboard
+      const now = Date.now();
+      const existing = await redisClient.hGetAll(`meta:${phoneNumber}`);
+      const isFirstTime = !existing || !existing.pairedAt;
+
+      await redisClient.hSet(`meta:${phoneNumber}`, {
+        phoneNumber,
+        status: 'online',
+        lastConnected: String(now),
+        pairedAt: existing?.pairedAt || String(now)
+      });
+
+      // Add to global set of all users ever paired
+      await redisClient.sAdd('users:all', phoneNumber);
+
+      if (isFirstTime) {
+        await logEvent('paired', { phoneNumber });
+      } else {
+        await logEvent('reconnected', { phoneNumber });
+      }
+
+      // ── Send welcome message to the user ──
+      try {
+        await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
+          text: WELCOME_MESSAGE
+        });
+      } catch (err) {
+        console.error(`Failed to send welcome message to ${phoneNumber}:`, err.message);
+      }
+
       if (socket) socket.emit('connected', 'WhatsApp connected successfully');
     }
   });
@@ -182,6 +350,12 @@ async function startBot(phoneNumber, socket) {
     try {
       let m = chatUpdate.messages[0];
       if (!m.message) return;
+
+      // Increment message counter for this user (for admin dashboard)
+      try {
+        await redisClient.hIncrBy(`meta:${phoneNumber}`, 'messagesReceived', 1);
+      } catch {}
+
       m = smsg(conn, m);
       await require('./case')(conn, m, chatUpdate);
     } catch (err) {
@@ -209,9 +383,20 @@ async function startBot(phoneNumber, socket) {
       }
     }
   });
+
+  return conn;
 }
 
-module.exports = { startBot, restoreAllSessions, connections };
+module.exports = {
+  startBot,
+  restoreAllSessions,
+  connections,
+  getRedis,
+  logEvent,
+  adminEvents,
+  getSettings,
+  updateSettings
+};
 
 // ── smsg helper ───────────────────────────────────────────
 const { proto, getContentType } = require('@whiskeysockets/baileys');
@@ -221,7 +406,7 @@ function smsg(conn, m) {
 
   if (m.key) {
     m.id = m.key.id;
-    m.isGroup = m.key.remoteJid.endsWith('@g.us');
+    m.isGroup = m.key.remoteJid.endsWith("@g.us");
     m.from = m.key.remoteJid;
     m.sender = conn.decodeJid(m.key.participant || m.key.remoteJid);
   }
@@ -263,4 +448,5 @@ function smsg(conn, m) {
     conn.sendMessage(chatId, { text, ...options }, { quoted: m });
 
   return m;
-}
+    }
+  
