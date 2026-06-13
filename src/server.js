@@ -10,6 +10,14 @@ const io = new Server(server);
 app.use(express.static(path.join(__dirname, '../public')));
 io.on('connection', (socket) => {
     console.log('Frontend connected');
+   setInterval(() => {
+    socket.emit("stats", {
+        active: connections.size,
+        max: 50,
+        uptime: process.uptime(),
+        sessions: [...connections.keys()]
+    });
+}, 3000);
     socket.on('request-code', async (phoneNumber) => {
         console.log('Phone number received:', phoneNumber);
         try {
