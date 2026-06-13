@@ -27,6 +27,9 @@ io.on('connection', (socket) => {
             socket.emit('error', 'Failed to start bot');
         }
     });
+    socket.on("disconnect", () => {
+    clearInterval(interval);
+});
 });
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
