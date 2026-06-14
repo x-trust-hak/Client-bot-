@@ -61,27 +61,45 @@ async function removeSudo(redisClient, phoneNumber, jid) {
     return config.sudo;
 }
 
+// ── Helper: normalize a JID down to its bare phone number ──
+// Handles formats like:
+//   2347041560392@s.whatsapp.net
+//   2347041560392:43@s.whatsapp.net  (device-suffixed, common for own number)
+//   2347041560392@lid                (linked-device ID format)
+function normalizeJid(jid) {
+    if (!jid) return '';
+    let num = jid.split('@')[0];
+    num = num.split(':')[0]; // strip device suffix
+    return num;
+}
+
 // ── Helper: check if sender is the bot owner (the person who paired this session) ──
-function isSessionOwner(m, phoneNumber) {
-    const senderNum = m.sender?.split('@')[0];
-    return senderNum === phoneNumber;
+function isSessionOwner(m, conn, phoneNumber) {
+    if (!phoneNumber) return false;
+
+    const senderNum = normalizeJid(m.sender);
+    if (senderNum === phoneNumber) return true;
+
+    // Also check against the bot's own JID (covers cases where the
+    // paired number messages itself, e.g. via linked devices / LID)
+    const botNum = normalizeJid(conn?.user?.id);
+    if (senderNum === botNum) return true;
+
+    return false;
 }
 
 // ── Helper: check if sender is a sudo user ──
 function isSudo(m, sudoList) {
-    return sudoList.includes(m.sender);
-}
-
-// ── Helper: check if sender is owner OR sudo ──
-function hasElevatedAccess(m, phoneNumber, sudoList) {
-    return isSessionOwner(m, phoneNumber) || isSudo(m, sudoList);
+    const senderNum = normalizeJid(m.sender);
+    return sudoList.some(jid => normalizeJid(jid) === senderNum);
 }
 
 // ── Helper: check if sender is group admin ──
 async function isGroupAdmin(conn, groupId, userJid) {
     try {
         const meta = await conn.groupMetadata(groupId);
-        const participant = meta.participants.find(p => p.id === userJid);
+        const userNum = normalizeJid(userJid);
+        const participant = meta.participants.find(p => normalizeJid(p.id) === userNum);
         return participant?.admin === 'admin' || participant?.admin === 'superadmin';
     } catch {
         return false;
@@ -92,8 +110,8 @@ async function isGroupAdmin(conn, groupId, userJid) {
 async function isBotAdmin(conn, groupId) {
     try {
         const meta = await conn.groupMetadata(groupId);
-        const botJid = conn.decodeJid(conn.user.id);
-        const participant = meta.participants.find(p => p.id === botJid);
+        const botNum = normalizeJid(conn.user.id);
+        const participant = meta.participants.find(p => normalizeJid(p.id) === botNum);
         return participant?.admin === 'admin' || participant?.admin === 'superadmin';
     } catch {
         return false;
@@ -141,7 +159,7 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
         const isGroup = m.isGroup;
 
         // ── Access checks ──
-        const senderIsOwner = phoneNumber ? isSessionOwner(m, phoneNumber) : false;
+        const senderIsOwner = phoneNumber ? isSessionOwner(m, conn, phoneNumber) : false;
         const senderIsSudo = isSudo(m, config.sudo);
         const senderHasAccess = senderIsOwner || senderIsSudo;
 
@@ -158,6 +176,63 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                     text: `🏓 Pong! Response time: ${latency}ms`,
                     edit: sent.key
                 });
+                break;
+            }
+
+            case "runtime":
+            case "uptime": {
+                const uptimeSec = Math.floor(process.uptime());
+                const days = Math.floor(uptimeSec / 86400);
+                const hours = Math.floor((uptimeSec % 86400) / 3600);
+                const mins = Math.floor((uptimeSec % 3600) / 60);
+                const secs = uptimeSec % 60;
+
+                let runtimeStr = '';
+                if (days > 0) runtimeStr += `${days}d `;
+                if (hours > 0) runtimeStr += `${hours}h `;
+                if (mins > 0) runtimeStr += `${mins}m `;
+                runtimeStr += `${secs}s`;
+
+                await conn.sendMessage(m.from, {
+                    text: `⏱️ *Runtime*\n\nBot has been running for: ${runtimeStr.trim()}`
+                }, { quoted: m });
+                break;
+            }
+
+            case "status":
+            case "sysinfo": {
+                const uptimeSec = Math.floor(process.uptime());
+                const days = Math.floor(uptimeSec / 86400);
+                const hours = Math.floor((uptimeSec % 86400) / 3600);
+                const mins = Math.floor((uptimeSec % 3600) / 60);
+                const secs = uptimeSec % 60;
+
+                let runtimeStr = '';
+                if (days > 0) runtimeStr += `${days}d `;
+                if (hours > 0) runtimeStr += `${hours}h `;
+                if (mins > 0) runtimeStr += `${mins}m `;
+                runtimeStr += `${secs}s`;
+
+                const mem = process.memoryUsage();
+                const usedMB = (mem.rss / 1024 / 1024).toFixed(1);
+                const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+
+                const statusText = `
+📊 *${BOT_NAME} — Status*
+
+⏱️ Runtime: ${runtimeStr.trim()}
+💾 Memory used: ${usedMB} MB
+🧠 Heap used: ${heapMB} MB
+🟢 Connection: Online
+🔧 Prefix: ${prefix}
+👑 Owner: wa.me/${phoneNumber}
+👥 Sudo users: ${config.sudo.length}
+🛡️ Anti-delete: ${global.antiDeleteEnabled ? 'ON' : 'OFF'}
+🛡️ Anti-edit: ${global.antiEditEnabled ? 'ON' : 'OFF'}
+🟢 Node.js: ${process.version}
+                `.trim();
+
+                await conn.sendMessage(m.from, { text: statusText }, { quoted: m });
                 break;
             }
 
@@ -191,6 +266,8 @@ Prefix: *${prefix}*
 
 *GENERAL*
 • ${prefix}ping
+• ${prefix}runtime
+• ${prefix}status
 • ${prefix}menu
 • ${prefix}owner
 • ${prefix}echo <text>
@@ -222,18 +299,9 @@ Prefix: *${prefix}*
 • ${prefix}antidelete on/off
 • ${prefix}antiedit on/off
                 `.trim();
-                await conn.sendMessage(
-    m.from,
-    {
-        image: {
-            url: "https://i.ibb.co/vvw7nZj9/fddcfb07c80a.jpg"
-        },
-        caption: menuText
-    },
-    { quoted: m }
-);
 
-            break;
+                await conn.sendMessage(m.from, { text: menuText }, { quoted: m });
+                break;
             }
 
             // ════════════════════════════════════════════
@@ -527,14 +595,10 @@ Prefix: *${prefix}*
                 break;
             }
 
-            /*case "restart": {
+            case "restart": {
                 if (!senderHasAccess) {
                     await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
                     break;
-                }
-
-                await conn.sendMessage(m.from, { text: "♻️ Restarting connection..." }, { quoted: m })
-                break;
                 }
 
                 await conn.sendMessage(m.from, { text: "♻️ Restarting connection..." }, { quoted: m });
@@ -542,7 +606,7 @@ Prefix: *${prefix}*
                     try { conn.end(); } catch {}
                 }, 1000);
                 break;
-            }*/
+            }
 
             // ════════════════════════════════════════════
             // PREFIX MANAGEMENT (Owner only)
@@ -567,7 +631,8 @@ Prefix: *${prefix}*
                 await conn.sendMessage(m.from, { text: `✅ Prefix changed to: ${text}` }, { quoted: m });
                 break;
             }
-             // ════════════════════════════════════════════
+
+            // ════════════════════════════════════════════
             // SUDO MANAGEMENT (Owner only)
             // ════════════════════════════════════════════
             case "addsudo": {
@@ -696,4 +761,4 @@ module.exports.getConfig = getConfig;
 module.exports.setPrefix = setPrefix;
 module.exports.addSudo = addSudo;
 module.exports.removeSudo = removeSudo;
-        
+                                           
