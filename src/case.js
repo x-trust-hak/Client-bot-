@@ -539,10 +539,10 @@ Prefix: *${prefix}*
             // PREFIX MANAGEMENT (Owner only)
             // ════════════════════════════════════════════
             case "setprefix": {
-               /* if (!senderIsOwner) {
+                if (!senderIsOwner) {
                     await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
                     break;
-                }*/
+                }
 
                 if (!text || text.length > 5) {
                     await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}setprefix <new prefix>\n(Max 5 characters)` }, { quoted: m });
