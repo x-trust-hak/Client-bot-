@@ -557,7 +557,7 @@ Prefix: *${prefix}*
                 await setPrefix(redisClient, phoneNumber, text);
                 await conn.sendMessage(m.from, { text: `✅ Prefix changed to: ${text}` }, { quoted: m });
                 break;
-           if            // ════════════════════════════════════════════
+             // ════════════════════════════════════════════
             // SUDO MANAGEMENT (Owner only)
             // ════════════════════════════════════════════
             case "addsudo": {
