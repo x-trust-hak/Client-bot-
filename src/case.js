@@ -518,7 +518,7 @@ Prefix: *${prefix}*
                 break;
             }
 
-            case "restart": {
+            /*case "restart": {
                 if (!senderHasAccess) {
                     await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
                     break;
@@ -533,7 +533,7 @@ Prefix: *${prefix}*
                     try { conn.end(); } catch {}
                 }, 1000);
                 break;
-            }
+            }*/
 
             // ════════════════════════════════════════════
             // PREFIX MANAGEMENT (Owner only)
