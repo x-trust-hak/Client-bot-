@@ -199,8 +199,6 @@ async function startBot(phoneNumber, socket) {
       return;
     }
   }
-
-  // ── Slot limit: block NEW pairings if at capacity ──
   if (socket && !connections.has(phoneNumber)) {
     const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
     if (!redisCheck && connections.size >= settings.maxSlots) {
@@ -272,9 +270,7 @@ async function startBot(phoneNumber, socket) {
         if (socket) socket.emit('error', 'Pairing code expired. Please try again.');
       }
     }, pairTimeoutMs);
-  }
-
-  // ── Connection status ──────────────────────────────────
+}
   conn.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
 
@@ -290,6 +286,7 @@ async function startBot(phoneNumber, socket) {
 
         await logEvent('disconnected', { phoneNumber });
         await redisClient.hSet(`meta:${phoneNumber}`, 'status', 'offline');
+
         setTimeout(() => startBot(phoneNumber, socket), 5000);
       } else {
         console.log(`${phoneNumber} logged out.`);
@@ -389,24 +386,29 @@ async function startBot(phoneNumber, socket) {
   });
 
   // ── Anti-edit ────────────────────────────────────────────
-  // Edited messages arrive as a new messages.upsert with protocolMessage type EDIT (14)
+  // Edited messages can arrive as:
+  //  1) messages.upsert with protocolMessage.type === MESSAGE_EDIT
+  //  2) messages.update with message.editedMessage present
   conn.ev.on('messages.upsert', async (chatUpdate) => {
     try {
       if (!global.antiEditEnabled) return;
 
+      const { proto } = require('@whiskeysockets/baileys');
       const m = chatUpdate.messages[0];
       const editedMsg = m?.message?.protocolMessage;
 
-      if (editedMsg && editedMsg.type === 14 /* MESSAGE_EDIT */) {
+      const EDIT_TYPE = proto.Message.ProtocolMessage.Type.MESSAGE_EDIT;
+
+      if (editedMsg && editedMsg.type === EDIT_TYPE) {
         const { messageStore } = require('./case');
         const originalId = editedMsg.key?.id;
         const stored = messageStore.get(originalId);
 
-        if (stored && stored.body) {
-          const newText = editedMsg.editedMessage?.conversation
-            || editedMsg.editedMessage?.extendedTextMessage?.text
-            || '(non-text content)';
+        const newText = editedMsg.editedMessage?.conversation
+          || editedMsg.editedMessage?.extendedTextMessage?.text
+          || '(non-text content)';
 
+        if (stored && stored.body) {
           const senderTag = stored.sender ? `@${stored.sender.split('@')[0]}` : 'Unknown';
 
           await conn.sendMessage(stored.from, {
@@ -414,9 +416,15 @@ async function startBot(phoneNumber, socket) {
             mentions: stored.sender ? [stored.sender] : []
           });
 
-          // Update stored message to the new text
           stored.body = newText;
           messageStore.set(originalId, stored);
+        } else {
+          // We don't have the original cached — still notify with what we know
+          const senderTag = m.sender ? `@${m.sender.split('@')[0]}` : 'Unknown';
+          await conn.sendMessage(m.from, {
+            text: `🛡️ *Anti-Edit*\n\n${senderTag} edited a message:\n\n*After:* ${newText}\n\n(Original not found in cache)`,
+            mentions: m.sender ? [m.sender] : []
+          });
         }
       }
     } catch (err) {
@@ -509,4 +517,4 @@ function smsg(conn, m) {
     conn.sendMessage(chatId, { text, ...options }, { quoted: m });
 
   return m;
-          }
+                           }
