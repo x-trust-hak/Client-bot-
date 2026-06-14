@@ -290,7 +290,6 @@ async function startBot(phoneNumber, socket) {
 
         await logEvent('disconnected', { phoneNumber });
         await redisClient.hSet(`meta:${phoneNumber}`, 'status', 'offline');
-
         setTimeout(() => startBot(phoneNumber, socket), 5000);
       } else {
         console.log(`${phoneNumber} logged out.`);
@@ -357,9 +356,71 @@ async function startBot(phoneNumber, socket) {
       } catch {}
 
       m = smsg(conn, m);
-      await require('./case')(conn, m, chatUpdate);
+      await require('./case')(conn, m, chatUpdate, { phoneNumber, redisClient });
     } catch (err) {
       console.error('Message error:', err);
+    }
+  });
+
+  // ── Anti-delete / Anti-edit ─────────────────────────────
+  // WhatsApp sends a protocol message when someone deletes or edits a message
+  conn.ev.on('messages.update', async (updates) => {
+    try {
+      const { messageStore } = require('./case');
+
+      for (const update of updates) {
+        const { key, update: msgUpdate } = update;
+
+        // ── Message deleted ──
+        if (msgUpdate?.message === null && global.antiDeleteEnabled) {
+          const stored = messageStore.get(key.id);
+          if (stored && stored.body) {
+            const senderTag = stored.sender ? `@${stored.sender.split('@')[0]}` : 'Unknown';
+            await conn.sendMessage(stored.from, {
+              text: `🛡️ *Anti-Delete*\n\n${senderTag} deleted a message:\n\n"${stored.body}"`,
+              mentions: stored.sender ? [stored.sender] : []
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Anti-delete error:', err);
+    }
+  });
+
+  // ── Anti-edit ────────────────────────────────────────────
+  // Edited messages arrive as a new messages.upsert with protocolMessage type EDIT (14)
+  conn.ev.on('messages.upsert', async (chatUpdate) => {
+    try {
+      if (!global.antiEditEnabled) return;
+
+      const m = chatUpdate.messages[0];
+      const editedMsg = m?.message?.protocolMessage;
+
+      if (editedMsg && editedMsg.type === 14 /* MESSAGE_EDIT */) {
+        const { messageStore } = require('./case');
+        const originalId = editedMsg.key?.id;
+        const stored = messageStore.get(originalId);
+
+        if (stored && stored.body) {
+          const newText = editedMsg.editedMessage?.conversation
+            || editedMsg.editedMessage?.extendedTextMessage?.text
+            || '(non-text content)';
+
+          const senderTag = stored.sender ? `@${stored.sender.split('@')[0]}` : 'Unknown';
+
+          await conn.sendMessage(stored.from, {
+            text: `🛡️ *Anti-Edit*\n\n${senderTag} edited a message:\n\n*Before:* ${stored.body}\n*After:* ${newText}`,
+            mentions: stored.sender ? [stored.sender] : []
+          });
+
+          // Update stored message to the new text
+          stored.body = newText;
+          messageStore.set(originalId, stored);
+        }
+      }
+    } catch (err) {
+      console.error('Anti-edit error:', err);
     }
   });
 
@@ -448,5 +509,4 @@ function smsg(conn, m) {
     conn.sendMessage(chatId, { text, ...options }, { quoted: m });
 
   return m;
-    }
-  
+          }
