@@ -345,7 +345,7 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                     await conn.sendMessage(m.from, { text: "❌ Invalid expression." }, { quoted: m });
                 }
                 break;
-            }
+            
 }
                 case "translate": {
                 const parts = text.split(' ');
