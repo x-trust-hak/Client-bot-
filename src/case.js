@@ -538,7 +538,7 @@ Prefix: *${prefix}*
             // ════════════════════════════════════════════
             // PREFIX MANAGEMENT (Owner only)
             // ════════════════════════════════════════════
-            case "setprefix": {
+           /* case "setprefix": {
                 if (!senderIsOwner) {
                     await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
                     break;
@@ -557,7 +557,7 @@ Prefix: *${prefix}*
                 await setPrefix(redisClient, phoneNumber, text);
                 await conn.sendMessage(m.from, { text: `✅ Prefix changed to: ${text}` }, { quoted: m });
                 break;
-            }
+            }*/
 
             // ════════════════════════════════════════════
             // SUDO MANAGEMENT (Owner only)
