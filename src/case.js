@@ -257,6 +257,287 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 }, { quoted: m });
                 break;
 
+            // ════════════════════════════════════════════
+            // TOOLS / UTILITY COMMANDS
+            // ════════════════════════════════════════════
+            case "weather": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}weather <city>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const res = await axios.get(`https://wttr.in/${encodeURIComponent(text)}?format=j1`, {
+                        timeout: 10000
+                    });
+
+                    const current = res.data.current_condition[0];
+                    const area = res.data.nearest_area[0];
+                    const location = `${area.areaName[0].value}, ${area.country[0].value}`;
+
+                    const weatherText = `
+🌤️ *Weather — ${location}*
+
+🌡️ Temperature: ${current.temp_C}°C (feels like ${current.FeelsLikeC}°C)
+☁️ Condition: ${current.weatherDesc[0].value}
+💧 Humidity: ${current.humidity}%
+💨 Wind: ${current.windspeedKmph} km/h
+👁️ Visibility: ${current.visibility} km
+                    `.trim();
+
+                    await conn.sendMessage(m.from, { text: weatherText }, { quoted: m });
+                } catch (err) {
+                    console.error('Weather error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Couldn't fetch weather. Check the city name and try again." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "time": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}time <city>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    // worldtimeapi requires Region/City format; try common patterns
+                    const cityFormatted = text.trim().replace(/\s+/g, '_');
+
+                    // Use wttr.in as fallback for local time (it includes localtime)
+                    const res = await axios.get(`https://wttr.in/${encodeURIComponent(text)}?format=j1`, {
+                        timeout: 10000
+                    });
+
+                    const localTime = res.data.current_condition[0].localObsDateTime || 'Unavailable';
+                    const area = res.data.nearest_area[0];
+                    const location = `${area.areaName[0].value}, ${area.country[0].value}`;
+
+                    await conn.sendMessage(m.from, {
+                        text: `🕐 *Time in ${location}*\n\n${localTime}`
+                    }, { quoted: m });
+                } catch (err) {
+                    console.error('Time error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Couldn't fetch time for that location." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "calc": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}calc <expression>\nExample: ${prefix}calc 5+5*2` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    // Only allow safe math characters — no letters, no function calls
+                    if (!/^[0-9+\-*/().\s%^]+$/.test(text)) {
+                        await conn.sendMessage(m.from, { text: "❌ Invalid expression. Only numbers and + - * / % ^ ( ) are allowed." }, { quoted: m });
+                        break;
+                    }
+
+                    const math = require('mathjs');
+                    const result = math.evaluate(text);
+
+                    await conn.sendMessage(m.from, { text: `🧮 *${text}* = *${result}*` }, { quoted: m });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: "❌ Invalid expression." }, { quoted: m });
+                }
+                break;
+            }
+}
+                case "translate": {
+                const parts = text.split(' ');
+                const targetLang = parts[0];
+                const toTranslate = parts.slice(1).join(' ');
+
+                if (!targetLang || !toTranslate) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}translate <lang_code> <text>\nExample: ${prefix}translate en Bonjour` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const res = await axios.get('https://api.mymemory.translated.net/get', {
+                        params: {
+                            q: toTranslate,
+                            langpair: `auto|${targetLang}`
+                        },
+                        timeout: 10000
+                    });
+
+                    const translated = res.data?.responseData?.translatedText;
+                    if (!translated) throw new Error('No translation returned');
+
+                    await conn.sendMessage(m.from, {
+                        text: `🌐 *Translation (${targetLang})*\n\n${translated}`
+                    }, { quoted: m });
+                } catch (err) {
+                    console.error('Translate error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Translation failed. Try again later." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "dictionary": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}dictionary <word>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const res = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(text.trim())}`, {
+                        timeout: 10000
+                    });
+
+                    const entry = res.data[0];
+                    const phonetic = entry.phonetic || '';
+                    let defText = `📖 *${entry.word}* ${phonetic}\n`;
+
+                    entry.meanings.slice(0, 3).forEach(meaning => {
+                        defText += `\n*${meaning.partOfSpeech}*\n`;
+                        meaning.definitions.slice(0, 2).forEach((def, i) => {
+                            defText += `${i + 1}. ${def.definition}\n`;
+                            if (def.example) defText += `   _e.g. ${def.example}_\n`;
+                        });
+                    });
+
+                    await conn.sendMessage(m.from, { text: defText.trim() }, { quoted: m });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ No definition found for "${text}"` }, { quoted: m });
+                }
+                break;
+            }
+
+            case "qrcode": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}qrcode <text>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const QRCode = require('qrcode');
+                    const buffer = await QRCode.toBuffer(text, { width: 400 });
+
+                    await conn.sendMessage(m.from, {
+                        image: buffer,
+                        caption: `📱 QR Code for:\n${text}`
+                    }, { quoted: m });
+                } catch (err) {
+                    console.error('QR code error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Failed to generate QR code." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "shorturl":
+            case "tinyurl": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}${command} <url>` }, { quoted: m });
+                    break;
+                }
+
+                if (!/^https?:\/\//i.test(text)) {
+                    await conn.sendMessage(m.from, { text: "❌ URL must start with http:// or https://" }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const res = await axios.get('https://is.gd/create.php', {
+                        params: { format: 'simple', url: text },
+                        timeout: 10000
+                    });
+
+                    await conn.sendMessage(m.from, { text: `🔗 Shortened URL:\n${res.data}` }, { quoted: m });
+                } catch (err) {
+                    console.error('Shorturl error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Failed to shorten URL." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "whois": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}whois <number>\nExample: ${prefix}whois 2348012345678` }, { quoted: m });
+                    break;
+                }
+
+                const number = text.replace(/[^0-9]/g, '');
+                if (!number) {
+                    await conn.sendMessage(m.from, { text: "❌ Invalid number format." }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const jid = `${number}@s.whatsapp.net`;
+                    const [result] = await conn.onWhatsApp(jid);
+
+                    if (!result || !result.exists) {
+                        await conn.sendMessage(m.from, { text: `❌ ${number} is not on WhatsApp.` }, { quoted: m });
+                        break;
+                    }
+
+                    let ppUrl = null;
+                    try {
+                        ppUrl = await conn.profilePictureUrl(result.jid, 'image');
+                    } catch {}
+
+                    const whoisText = `🔍 *WHOIS — ${number}*\n\n✅ Registered on WhatsApp\n🆔 JID: ${result.jid}`;
+
+                    if (ppUrl) {
+                        await conn.sendMessage(m.from, {
+                            image: { url: ppUrl },
+                            caption: whoisText
+                        }, { quoted: m });
+                    } else {
+                        await conn.sendMessage(m.from, { text: whoisText + '\n\n📷 No profile picture available.' }, { quoted: m });
+                    }
+                } catch (err) {
+                    console.error('Whois error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Lookup failed." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "ip": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}ip <address>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const res = await axios.get(`http://ip-api.com/json/${encodeURIComponent(text.trim())}`, {
+                        timeout: 10000
+                    });
+
+                    const d = res.data;
+                    if (d.status !== 'success') {
+                        await conn.sendMessage(m.from, { text: `❌ ${d.message || 'Lookup failed'}` }, { quoted: m });
+                        break;
+                    }
+
+                    const ipText = `
+🌐 *IP Lookup — ${d.query}*
+
+📍 Location: ${d.city}, ${d.regionName}, ${d.country}
+🏢 ISP: ${d.isp}
+🏛️ Org: ${d.org}
+🌍 Timezone: ${d.timezone}
+🧭 Coordinates: ${d.lat}, ${d.lon}
+                    `.trim();
+
+                    await conn.sendMessage(m.from, { text: ipText }, { quoted: m });
+                } catch (err) {
+                    console.error('IP lookup error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ IP lookup failed." }, { quoted: m });
+                }
+                break;
+            }
+
             case "menu":
             case "help": {
                 const menuText = `
@@ -272,6 +553,18 @@ Prefix: *${prefix}*
 • ${prefix}menu
 • ${prefix}owner
 • ${prefix}echo <text>
+
+*TOOLS*
+• ${prefix}weather <city>
+• ${prefix}time <city>
+• ${prefix}calc <expression>
+• ${prefix}translate <lang> <text>
+• ${prefix}dictionary <word>
+• ${prefix}qrcode <text>
+• ${prefix}shorturl <url>
+• ${prefix}tinyurl <url>
+• ${prefix}whois <number>
+• ${prefix}ip <address>
 
 *GROUP COMMANDS*
 • ${prefix}tagall <text>
@@ -296,12 +589,26 @@ Prefix: *${prefix}*
 • ${prefix}delsudo @user
 • ${prefix}listsudo
 
+*DEV / DIAGNOSTICS (Owner only)*
+• ${prefix}eval <code>
+• ${prefix}exec <code>
+• ${prefix}shell <command>
+• ${prefix}logs
+• ${prefix}memory
+• ${prefix}cpu
+• ${prefix}disk
+• ${prefix}speed
+• ${prefix}gitpull
+
 *PROTECTION*
 • ${prefix}antidelete on/off
 • ${prefix}antiedit on/off
                 `.trim();
 
-                await conn.sendMessage(m.from, { text: menuText }, { quoted: m });
+                await conn.sendMessage(m.from, {
+                    image: { url: "https://i.ibb.co/vvw7nZj9/fddcfb07c80a.jpg" },
+                    caption: menuText
+                }, { quoted: m });
                 break;
             }
 
@@ -357,8 +664,8 @@ Prefix: *${prefix}*
                     mentions: [target]
                 }, { quoted: m });
                 break;
-      }
-            case "add": {
+            }
+        case "add": {
                 if (!isGroup) {
                     await conn.sendMessage(m.from, { text: "❌ This command only works in groups." }, { quoted: m });
                     break;
@@ -566,9 +873,8 @@ Prefix: *${prefix}*
                 await conn.updateBlockStatus(target, 'unblock');
                 await conn.sendMessage(m.from, { text: `✅ Unblocked @${target.split('@')[0]}`, mentions: [target] }, { quoted: m });
                 break;
-            }
-
-            case "setpp": {
+                        }
+        case "setpp": {
                 if (!senderHasAccess) {
                     await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
                     break;
@@ -609,9 +915,215 @@ Prefix: *${prefix}*
             }
 
             // ════════════════════════════════════════════
+            // DEV / DIAGNOSTIC COMMANDS (Owner only — powerful)
+            // ════════════════════════════════════════════
+            case "eval": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}eval <code>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    let result = await eval(text);
+                    if (typeof result !== 'string') {
+                        result = require('util').inspect(result, { depth: 1 });
+                    }
+
+                    if (result.length > 4000) result = result.slice(0, 4000) + '\n... (truncated)';
+
+                    await conn.sendMessage(m.from, { text: `✅ *Result:*\n\`\`\`${result}\`\`\`` }, { quoted: m });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ *Error:*\n\`\`\`${err.message}\`\`\`` }, { quoted: m });
+                }
+                break;
+            }
+
+            case "exec":
+            case "shell": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}${command} <command>` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const { exec } = require('child_process');
+
+                    exec(text, { timeout: 30000, maxBuffer: 1024 * 1024 }, async (error, stdout, stderr) => {
+                        let output = '';
+                        if (stdout) output += stdout;
+                        if (stderr) output += `\n[stderr]\n${stderr}`;
+                        if (error && !output) output = error.message;
+                        if (!output) output = '(no output)';
+
+                        if (output.length > 4000) output = output.slice(0, 4000) + '\n... (truncated)';
+
+                        await conn.sendMessage(m.from, { text: `\`\`\`${output}\`\`\`` }, { quoted: m });
+                    });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ *Error:*\n\`\`\`${err.message}\`\`\`` }, { quoted: m });
+                }
+                break;
+            }
+
+            case "logs": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const lines = parseInt(args[0]) || 50;
+                    const { exec } = require('child_process');
+
+                    // Try to read recent stdout/stderr from process (no log file by default)
+                    // This works if logs are being written to a file; otherwise informs the user.
+                    const logPath = process.env.LOG_FILE_PATH || '/tmp/bot.log';
+
+                    if (!fs.existsSync(logPath)) {
+                        await conn.sendMessage(m.from, {
+                            text: `⚠️ No log file found at ${logPath}.\n\nSet LOG_FILE_PATH env var and redirect output to a file to enable this command.\n\nOn Render, view logs via the dashboard instead.`
+                        }, { quoted: m });
+                        break;
+                    }
+
+                    exec(`tail -n ${lines} ${logPath}`, { timeout: 10000 }, async (error, stdout) => {
+                        let output = stdout || error?.message || '(empty)';
+                        if (output.length > 4000) output = output.slice(-4000);
+                        await conn.sendMessage(m.from, { text: `📜 *Last ${lines} log lines:*\n\`\`\`${output}\`\`\`` }, { quoted: m });
+                    });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ ${err.message}` }, { quoted: m });
+                }
+                break;
+            }
+
+            case "memory": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                const mem = process.memoryUsage();
+                const toMB = (b) => (b / 1024 / 1024).toFixed(2);
+
+                const memText = `
+💾 *Memory Usage*
+
+RSS: ${toMB(mem.rss)} MB
+Heap Total: ${toMB(mem.heapTotal)} MB
+Heap Used: ${toMB(mem.heapUsed)} MB
+External: ${toMB(mem.external)} MB
+Array Buffers: ${toMB(mem.arrayBuffers)} MB
+                `.trim();
+
+                await conn.sendMessage(m.from, { text: memText }, { quoted: m });
+                break;
+            }
+
+            case "cpu": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                const os = require('os');
+                const cpus = os.cpus();
+                const loadAvg = os.loadavg();
+
+                const cpuText = `
+🧠 *CPU Info*
+
+Model: ${cpus[0]?.model || 'Unknown'}
+Cores: ${cpus.length}
+Load Avg (1m/5m/15m): ${loadAvg.map(l => l.toFixed(2)).join(' / ')}
+Platform: ${os.platform()} (${os.arch()})
+                `.trim();
+
+                await conn.sendMessage(m.from, { text: cpuText }, { quoted: m });
+                break;
+            }
+
+            case "disk": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const { exec } = require('child_process');
+                    exec('df -h /', { timeout: 10000 }, async (error, stdout) => {
+                        const output = stdout || error?.message || '(unavailable)';
+                        await conn.sendMessage(m.from, { text: `💽 *Disk Usage*\n\`\`\`${output}\`\`\`` }, { quoted: m });
+                    });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ ${err.message}` }, { quoted: m });
+                }
+                break;
+            }
+
+            case "speed": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const axios = require('axios');
+                    const testUrl = 'https://speed.cloudflare.com/__down?bytes=1000000'; // 1MB
+
+                    const start = Date.now();
+                    const res = await axios.get(testUrl, { responseType: 'arraybuffer', timeout: 20000 });
+                    const durationSec = (Date.now() - start) / 1000;
+
+                    const bytes = res.data.length;
+                    const mbps = ((bytes * 8) / 1024 / 1024 / durationSec).toFixed(2);
+
+                    await conn.sendMessage(m.from, {
+                        text: `🚀 *Speed Test*\n\nDownloaded: ${(bytes / 1024 / 1024).toFixed(2)} MB\nTime: ${durationSec.toFixed(2)}s\nSpeed: ~${mbps} Mbps`
+                    }, { quoted: m });
+                } catch (err) {
+                    console.error('Speed test error:', err.message);
+                    await conn.sendMessage(m.from, { text: "❌ Speed test failed." }, { quoted: m });
+                }
+                break;
+            }
+
+            case "gitpull": {
+                if (!senderIsOwner) {
+                    await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    const { exec } = require('child_process');
+                    exec('git pull', { timeout: 30000, cwd: process.cwd() }, async (error, stdout, stderr) => {
+                        let output = stdout || '';
+                        if (stderr) output += `\n${stderr}`;
+                        if (error && !output) output = error.message;
+                        if (!output) output = '(no output)';
+
+                        await conn.sendMessage(m.from, { text: `📥 *Git Pull*\n\`\`\`${output}\`\`\`\n\n⚠️ Restart the bot to apply changes.` }, { quoted: m });
+                    });
+                } catch (err) {
+                    await conn.sendMessage(m.from, { text: `❌ ${err.message}` }, { quoted: m });
+                }
+                break;
+            }
+
+            // ════════════════════════════════════════════
             // PREFIX MANAGEMENT (Owner only)
             // ════════════════════════════════════════════
-            case "setprefix": {
+    case "setprefix": {
                 if (!senderIsOwner) {
                     await conn.sendMessage(m.from, { text: "❌ Owner only command." }, { quoted: m });
                     break;
@@ -683,7 +1195,8 @@ Prefix: *${prefix}*
                     mentions: [target]
                 }, { quoted: m });
                 break;
-                  }
+            }
+
             case "listsudo": {
                 if (!senderHasAccess) {
                     await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
@@ -760,3 +1273,4 @@ module.exports.getConfig = getConfig;
 module.exports.setPrefix = setPrefix;
 module.exports.addSudo = addSudo;
 module.exports.removeSudo = removeSudo;
+                                       
