@@ -222,9 +222,18 @@ Prefix: *${prefix}*
 • ${prefix}antidelete on/off
 • ${prefix}antiedit on/off
                 `.trim();
+                await conn.sendMessage(
+    m.from,
+    {
+        image: {
+            url: "https://i.ibb.co/vvw7nZj9/fddcfb07c80a.jpg"
+        },
+        caption: menuText
+    },
+    { quoted: m }
+);
 
-                await conn.sendMessage(m.from, { text: menuText }, { quoted: m });
-                break;
+            break;
             }
 
             // ════════════════════════════════════════════
