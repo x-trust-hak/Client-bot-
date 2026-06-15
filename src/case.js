@@ -292,7 +292,197 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 }, { quoted: m });
                 break;
             }
-             case "ch": {
+                case "ch": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `💬 Usage: ${prefix}ch <question>` }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://trustbit.app/api/ai/ch?query=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data || !data.response) {
+            await conn.sendMessage(m.from, { text: "⚠️ No response from Chat AI." }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            { text: `🤖 *Chat AI*\n\n${data.response}` },
+            { quoted: m }
+        );
+    } catch (err) {
+        console.error("CH Error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Error connecting to Chat API." }, { quoted: m });
+    }
+    break;
+}
+
+case "chatbot": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `💬 Usage: ${prefix}chatbot <question>` }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://trustbit.app/api/ai/chatbot?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data || !data.data || !data.data.response) {
+            await conn.sendMessage(m.from, { text: "⚠️ No response from ChatBot API." }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            { text: `🤖 *TrustBit ChatBot*\n\n${data.data.response}` },
+            { quoted: m }
+        );
+    } catch (err) {
+        console.error("ChatBot Error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Error connecting to ChatBot API." }, { quoted: m });
+    }
+    break;
+}
+
+case "everywhere": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `💬 Usage: ${prefix}everywhere <question>` }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://trustbit.app/api/ai/chateverywhere?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data || !data.message) {
+            await conn.sendMessage(m.from, { text: "⚠️ No response from ChatEverywhere API." }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            { text: `🌍 *ChatEverywhere AI*\n\n${data.message}` },
+            { quoted: m }
+        );
+    } catch (err) {
+        console.error("Everywhere Error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Error connecting to ChatEverywhere API." }, { quoted: m });
+    }
+    break;
+}
+
+case "chatex": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `💬 Usage: ${prefix}chatex <question>` }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://trustbit.app/api/ai/chatex?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data || !data.response) {
+            await conn.sendMessage(m.from, { text: "⚠️ No response from ChatEx API." }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            { text: `🤖 *ChatEx AI*\n\n${data.response}` },
+            { quoted: m }
+        );
+    } catch (err) {
+        console.error("ChatEx Error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Error connecting to ChatEx API." }, { quoted: m });
+    }
+    break;
+}
+
+case "convertcode": {
+    if (!text) {
+        await conn.sendMessage(
+            m.from,
+            {
+                text: `💻 Usage:\n${prefix}convertcode Python | JavaScript | print("hello")`
+            },
+            { quoted: m }
+        );
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const parts = text.split("|");
+
+        if (parts.length < 3) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: `⚠️ Format:\n${prefix}convertcode SourceLang | TargetLang | Code`
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        const source = parts[0].trim();
+        const target = parts[1].trim();
+        const code = parts.slice(2).join("|").trim();
+
+        const { data } = await axios.get(
+            `https://trustbit.app/api/ai/convertcode?code=${encodeURIComponent(code)}&target=${encodeURIComponent(target)}`,
+            { timeout: 30000 }
+        );
+
+        if (!data || !data.code) {
+            await conn.sendMessage(m.from, { text: "⚠️ Failed to convert code." }, { quoted: m });
+            break;
+        }
+
+        const msg = `💻 *Code Converter*
+
+📌 Source: ${source}
+🎯 Target: ${data.language}
+
+📝 *Converted Code:*
+\`\`\`${data.language}
+${data.code}
+\`\`\`
+
+📖 *Explanation:*
+${data.explanation}`;
+
+        await conn.sendMessage(m.from, { text: msg }, { quoted: m });
+    } catch (err) {
+        console.error("ConvertCode Error:", err.message);
+        await conn.sendMessage(
+            m.from,
+            { text: "❌ Error connecting to ConvertCode API." },
+            { quoted: m }
+        );
+    }
+    break;
+}
+            /* case "ch": {
     if (!text) {
         await conn.sendMessage(m.from, { text: `💬 Usage: ${prefix}ch <question>` }, { quoted: m });
         break;
@@ -481,7 +671,7 @@ ${data.explanation}`;
         );
     }
     break;
-                        }   
+                        }   */
 
             case "status":
             case "sysinfo": {
