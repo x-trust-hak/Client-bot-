@@ -7,7 +7,7 @@ const badges = require("./badges");
 const minigames = require("./minigames");
 const referral = require("./referral");
 const events = require("./events");
-const shop = require("./shop");
+//const shop = require("./shop");
 const wordgames = require("./wordgames");
 
 const BOT_NAME = "Lady Liya";
