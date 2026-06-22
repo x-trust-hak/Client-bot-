@@ -1931,6 +1931,7 @@ ${marriedText}
                 await conn.sendMessage(m.from, { text: `🎁 *Daily Reward Claimed!*\n\n+${economy.formatCoins(reward)} coins\n+20 XP\n\nCome back in 24h!` }, { quoted: m });
                 break;
             }
+                
 
             case "weekly": {
                 const profile = await economy.getProfile(redisClient, m.sender);
@@ -1950,6 +1951,57 @@ ${marriedText}
                 await conn.sendMessage(m.from, { text: `🎉 *Weekly Reward Claimed!*\n\n+${economy.formatCoins(reward)} coins\n+100 XP\n\nCome back in 7 days!` }, { quoted: m });
                 break;
             }
+                case "borli": {
+    if (!text) {
+        await conn.sendMessage(
+            m.from,
+            {
+                text: `💅 Usage: ${prefix}borli <your message>`
+            },
+            { quoted: m }
+        );
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/borli?action=chat&prompt=${encodeURIComponent(text)}`,
+            {
+                timeout: 30000
+            }
+        );
+
+        const reply =
+            data?.response ||
+            data?.message ||
+            data?.data?.response ||
+            data?.data?.message ||
+            JSON.stringify(data, null, 2);
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: `💅 *Lady Liya AI*\n\n${reply}`
+            },
+            { quoted: m }
+        );
+
+    } catch (err) {
+        console.error("Borli Error:", err.message);
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "❌ Lady Liya couldn't connect to Borli AI."
+            },
+            { quoted: m }
+        );
+    }
+
+    break;
+             }
 
             case "work": {
                 const profile = await economy.getProfile(redisClient, m.sender);
