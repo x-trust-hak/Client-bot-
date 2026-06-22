@@ -200,6 +200,27 @@ const CONFIG_DEFAULTS = {
     autoResponder: false,
     autoresponderMap: {}
 };
+const axios = require("axios");
+const FormData = require("form-data");
+
+async function uploadImage(buffer) {
+    const form = new FormData();
+
+    form.append("file", buffer, {
+        filename: "image.jpg",
+        contentType: "image/jpeg"
+    });
+
+    const { data } = await axios.post(
+        "https://telegra.ph/upload",
+        form,
+        {
+            headers: form.getHeaders()
+        }
+    );
+
+    return "https://telegra.ph" + data[0].src;
+}
 
 async function getConfig(redisClient, phoneNumber) {
     try {
@@ -1340,8 +1361,149 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
     }
     break;
 }
+case "aiserv":
+case "ai": {
+    if (!text) {
+        await conn.sendMessage(
+            m.from,
+            {
+                text: `💅 Usage: ${prefix}ai <question>`
+            },
+            { quoted: m }
+        );
+        break;
+    }
 
-case "chatbot": {
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/aiserv?prompt=${encodeURIComponent(text)}`,
+            {
+                timeout: 30000
+            }
+        );
+
+        if (!data || !data.response) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: "⚠️ Lady Liya couldn't get a response."
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        const msg = `💅 *Lady Liya AI*
+
+${data.response}
+
+━━━━━━━━━━━━━━━
+🤖 Model: ${data.model || "Unknown"}
+🎟️ Credits Left: ${data.credits_left ?? "?"}`;
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: msg
+            },
+            { quoted: m }
+        );
+
+    } catch (err) {
+        console.error("AIServ Error:", err.message);
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "❌ Lady Liya couldn't connect to the AI service."
+            },
+            { quoted: m }
+        );
+    }
+
+    break;
+        }
+                case "cartoon": {
+    try {
+        const quoted = m.quoted ? m.quoted : m;
+        const mime = quoted.mimetype || "";
+
+        if (!mime.startsWith("image/")) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: `🖼️ Reply to an image with ${prefix}cartoon`
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "💅 Lady Liya is turning your image into a cartoon..."
+            },
+            { quoted: m }
+        );
+
+        constaxios = require("axios");
+
+        // Download image
+        const buffer = await quoted.download();
+
+        // Upload image and get URL
+        const imageUrl = await uploadImage(buffer);
+
+        // Call Cartoon API
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/cartoon?image=${encodeURIComponent(imageUrl)}`,
+            {
+                timeout: 120000
+            }
+        );
+
+        if (!data || !data.anime_image) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: "⚠️ Failed to generate cartoon image."
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            {
+                image: { url: data.anime_image },
+                caption: `💅 *Lady Liya Cartoon AI*
+
+✨ Your cartoon image is ready!
+
+🎟️ Credits Remaining: ${data.credits_remaining ?? "Unknown"}`
+            },
+            { quoted: m }
+        );
+
+    } catch (err) {
+        console.error("Cartoon Error:", err);
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "❌ Lady Liya couldn't process that image."
+            },
+            { quoted: m }
+        );
+    }
+
+    break;
+    }
+    const "chatbot": {
     if (!text) {
         await conn.sendMessage(m.from, {
             text: `💅 Usage: ${prefix}chatbot <question>`
