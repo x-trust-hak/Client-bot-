@@ -1304,6 +1304,216 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 }, { quoted: m });
                 break;
             }
+                case "ch": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `💅 Usage: ${prefix}ch <question>`
+        }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/ch?query=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data?.response) {
+            await conn.sendMessage(m.from, {
+                text: "⚠️ Lady Liya couldn't get a response."
+            }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(m.from, {
+            text: `💅 *Lady Liya AI*\n\n${data.response}`
+        }, { quoted: m });
+
+    } catch (err) {
+        console.error("CH Error:", err.message);
+
+        await conn.sendMessage(m.from, {
+            text: "❌ Lady Liya couldn't connect to the AI server."
+        }, { quoted: m });
+    }
+    break;
+}
+
+case "chatbot": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `💅 Usage: ${prefix}chatbot <question>`
+        }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/chatbot?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data?.data?.response) {
+            await conn.sendMessage(m.from, {
+                text: "⚠️ No response from Lady Liya ChatBot."
+            }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(m.from, {
+            text: `💅 *Lady Liya ChatBot*\n\n${data.data.response}`
+        }, { quoted: m });
+
+    } catch (err) {
+        console.error("ChatBot Error:", err.message);
+
+        await conn.sendMessage(m.from, {
+            text: "❌ Lady Liya couldn't connect to ChatBot."
+        }, { quoted: m });
+    }
+    break;
+}
+
+case "everywhere": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `💅 Usage: ${prefix}everywhere <question>`
+        }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/chateverywhere?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data?.message) {
+            await conn.sendMessage(m.from, {
+                text: "⚠️ No response received."
+            }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(m.from, {
+            text: `🌍 *Lady Liya Everywhere AI*\n\n${data.message}`
+        }, { quoted: m });
+
+    } catch (err) {
+        console.error("Everywhere Error:", err.message);
+
+        await conn.sendMessage(m.from, {
+            text: "❌ Lady Liya couldn't connect to Everywhere AI."
+        }, { quoted: m });
+    }
+    break;
+}
+
+case "chatex": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `💅 Usage: ${prefix}chatex <question>`
+        }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/chatex?text=${encodeURIComponent(text)}`,
+            { timeout: 15000 }
+        );
+
+        if (!data?.response) {
+            await conn.sendMessage(m.from, {
+                text: "⚠️ No response from ChatEx."
+            }, { quoted: m });
+            break;
+        }
+
+        await conn.sendMessage(m.from, {
+            text: `✨ *Lady Liya ChatEx*\n\n${data.response}`
+        }, { quoted: m });
+
+    } catch (err) {
+        console.error("ChatEx Error:", err.message);
+
+        await conn.sendMessage(m.from, {
+            text: "❌ Lady Liya couldn't connect to ChatEx."
+        }, { quoted: m });
+    }
+    break;
+}
+
+case "convertcode": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `💻 Usage:\n${prefix}convertcode Python | JavaScript | print("hello")`
+        }, { quoted: m });
+        break;
+    }
+
+    try {
+        const axios = require("axios");
+
+        const parts = text.split("|");
+
+        if (parts.length < 3) {
+            await conn.sendMessage(m.from, {
+                text: `⚠️ Format:\n${prefix}convertcode SourceLang | TargetLang | Code`
+            }, { quoted: m });
+            break;
+        }
+
+        const source = parts[0].trim();
+        const target = parts[1].trim();
+        const code = parts.slice(2).join("|").trim();
+
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/convertcode?code=${encodeURIComponent(code)}&target=${encodeURIComponent(target)}`,
+            { timeout: 30000 }
+        );
+
+        if (!data?.code) {
+            await conn.sendMessage(m.from, {
+                text: "⚠️ Failed to convert code."
+            }, { quoted: m });
+            break;
+        }
+
+        const msg = `💅 *Lady Liya Code Converter*
+
+📌 Source: ${source}
+🎯 Target: ${data.language}
+
+📝 *Converted Code:*
+\`\`\`${data.language}
+${data.code}
+\`\`\`
+
+📖 *Explanation:*
+${data.explanation}`;
+
+        await conn.sendMessage(m.from, {
+            text: msg
+        }, { quoted: m });
+
+    } catch (err) {
+        console.error("ConvertCode Error:", err.message);
+
+        await conn.sendMessage(m.from, {
+            text: "❌ Lady Liya couldn't convert that code."
+        }, { quoted: m });
+    }
+    break;
+}
 
             case "reminders":
             case "myreminders": {
