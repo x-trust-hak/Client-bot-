@@ -1449,7 +1449,7 @@ ${data.response}
             { quoted: m }
         );
 
-        constaxios = require("axios");
+        const axios = require("axios");
 
         // Download image
         const buffer = await quoted.download();
@@ -1502,8 +1502,86 @@ ${data.response}
     }
 
     break;
-    }
-    const "chatbot": {
+                }
+              /*  case "cartoon": {
+    try {
+        const quoted = m.quoted ? m.quoted : m;
+        const mime = quoted.mimetype || "";
+
+        if (!mime.startsWith("image/")) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: `🖼️ Reply to an image with ${prefix}cartoon`
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "💅 Lady Liya is turning your image into a cartoon..."
+            },
+            { quoted: m }
+        );
+
+        constaxios = require("axios");
+
+        // Download image
+        const buffer = await quoted.download();
+
+        // Upload image and get URL
+        const imageUrl = await uploadImage(buffer);
+
+        // Call Cartoon API
+        const { data } = await axios.get(
+            `https://api-trustbit.name.ng/api/ai/cartoon?image=${encodeURIComponent(imageUrl)}`,
+            {
+                timeout: 120000
+            }
+        );
+
+        if (!data || !data.anime_image) {
+            await conn.sendMessage(
+                m.from,
+                {
+                    text: "⚠️ Failed to generate cartoon image."
+                },
+                { quoted: m }
+            );
+            break;
+        }
+
+        await conn.sendMessage(
+            m.from,
+            {
+                image: { url: data.anime_image },
+                caption: `💅 *Lady Liya Cartoon AI*
+
+✨ Your cartoon image is ready!
+
+🎟️ Credits Remaining: ${data.credits_remaining ?? "Unknown"}`
+            },
+            { quoted: m }
+        );
+
+    } catch (err) {
+        console.error("Cartoon Error:", err);
+
+        await conn.sendMessage(
+            m.from,
+            {
+                text: "❌ Lady Liya couldn't process that image."
+            },
+            { quoted: m }
+        );
+
+
+    break;
+    }*/
+    case "chatbot": {
     if (!text) {
         await conn.sendMessage(m.from, {
             text: `💅 Usage: ${prefix}chatbot <question>`
