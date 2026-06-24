@@ -622,7 +622,7 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
     case 'sound10': {
 try {
         let link = `https://raw.githubusercontent.com/TeamTrust123/Songs/main/${command}.mp3`
-        await conn.sendMessage(from, {
+        await conn.sendMessage(m.from, {
           audio: {
             url: link
           },
