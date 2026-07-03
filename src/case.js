@@ -1784,6 +1784,41 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 break;
             }
 
+                case "aaii":
+case "aiserv": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `🤖 Usage: ${prefix}ai <question>\n\n💰 Cost: 5 coins per use` }, { quoted: m });
+        break;
+    }
+    const aiProfile = await economy.getProfile(redisClient, m.sender);
+    if (aiProfile.coins < 5) {
+        await conn.sendMessage(m.from, { text: `❌ Insufficient credits! You need 5 coins to use AI.\n\n💰 Balance: ${economy.formatCoins(aiProfile.coins)} coins` }, { quoted: m });
+        break;
+    }
+    try {
+        const axios = require("axios");
+        const { data } = await axios.get(
+            `https://trustbit-api-devtrust-59jq.onrender.com/api/ai/aiserv?prompt=${encodeURIComponent(text)}`,
+            {
+                timeout: 30000,
+                headers: { "x-api-key": "tb_afedf1e14d9c8e46a91281ebe6554f7ca3f70e18" }
+            }
+        );
+        if (!data?.response) {
+            await conn.sendMessage(m.from, { text: "⚠️ Lady Liya AI couldn't get a response. Try again." }, { quoted: m });
+            break;
+        }
+        await economy.addCoins(redisClient, m.sender, -5);
+        await conn.sendMessage(m.from, {
+            text: `🤖 *Lady Liya AI*\n\n${data.response}\n\n━━━━━━━━━━━━━━━\n🔮 Model: ${data.model || 'Unknown'}\n💰 -5 coins deducted`
+        }, { quoted: m });
+    } catch (err) {
+        console.error("AI error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Lady Liya AI is currently unavailable. Try again later." }, { quoted: m });
+    }
+    break;
+}
+
             case "shorturl":
             case "tinyurl": {
                 if (!text) {
