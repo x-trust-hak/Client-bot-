@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Lady Liya — Admin</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+  --bg:      #04040e;
+  --panel:   #0a0a18;
+  --panel2:  #10101f;
+  --border:  rgba(255,255,255,0.08);
+
+  --cyan:    #00f5ff;
+  --pink:    #ff2d78;
+  --purple:  #b44dff;
+  --gold:    #ffd700;
+  --green:   #00ff99;
+  --red:     #ff3355;
+
+  --mono:    'Share Tech Mono', monospace;
+  --display: 'Orbitron', monospace;
+}
+
+html, body {
+  background: var(--bg);
+  color: #e8e8f0;
+  font-family: var(--mono);
+  min-height: 100vh;
+}
+
+/* ════════ LOGIN SCREEN ════════ */
+.login-shell {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 32px;
+  text-align: center;
+  box-shadow: 0 0 60px rgba(0,245,255,0.06), 0 30px 80px rgba(0,0,0,0.7);
+  position: relative;
+  overflow: hidden;
+}
+.login-card::before {
+  content:'';
+  position:absolute; top:0; left:0; right:0; height:2px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--pink), var(--gold), var(--cyan));
+  background-size: 300% 100%;
+  animation: rainbowSlide 4s linear infinite;
+}
+@keyframes rainbowSlide { from{background-position:0% 0} to{background-position:300% 0} }
+
+.login-logo {
+  font-family: var(--display);
+  font-size: 1.4rem;
+  font-weight: 900;
+  letter-spacing: 5px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 4px;
+}
+.login-sub {
+  font-size: 0.55rem; letter-spacing: 3px; color: rgba(0,245,255,0.4); margin-bottom: 24px;
+}
+.login-card input {
+  width: 100%; padding: 12px; margin-bottom: 12px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+  color: #fff; font-family: var(--mono); font-size: 0.9rem; outline: none;
+}
+.login-card input:focus { border-color: var(--cyan); }
+.login-card button {
+  width: 100%; padding: 12px; border: none; border-radius: 4px; cursor: pointer;
+  font-family: var(--display); font-size: 0.7rem; letter-spacing: 3px; font-weight: 700; color: #fff;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--pink));
+  background-size: 200% 100%;
+  animation: btnGradient 4s linear infinite;
+}
+@keyframes btnGradient { from{background-position:0% 0} to{background-position:200% 0} }
+.login-error { color: var(--red); font-size: 0.7rem; margin-top: 10px; min-height: 16px; }
+
+/* ════════ DASHBOARD SHELL ════════ */
+.dash { display: none; min-height: 100vh; }
+.dash.active { display: flex; }
+
+/* Sidebar */
+.sidebar {
+  width: 220px; background: var(--panel); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 20px 0; flex-shrink: 0;
+}
+.sidebar-logo {
+  font-family: var(--display); font-size: 1.1rem; font-weight: 900; letter-spacing: 4px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+.nav-item {
+  padding: 12px 20px; font-size: 0.75rem; letter-spacing: 2px; cursor: pointer;
+  color: rgba(255,255,255,0.5); border-left: 2px solid transparent;
+  display: flex; align-items: center; gap: 10px; transition: all 0.15s;
+}
+.nav-item:hover { background: rgba(255,255,255,0.03); color: #fff; }
+.nav-item.active { color: var(--cyan); border-left-color: var(--cyan); background: rgba(0,245,255,0.05); }
+.nav-spacer { flex: 1; }
+.nav-item.logout { color: var(--red); margin-top: auto; }
+
+/* Main area */
+.main { flex: 1; padding: 24px; overflow-y: auto; max-height: 100vh; }
+.page { display: none; }
+.page.active { display: block; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)} }
+
+.page-title {
+  font-family: var(--display); font-size: 1.3rem; font-weight: 900; letter-spacing: 3px; margin-bottom: 20px;
+  background: linear-gradient(90deg, var(--cyan), var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+
+/* Status bar */
+.status-banner {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  background: rgba(0,255,153,0.05); border: 1px solid rgba(0,255,153,0.2);
+  border-radius: 6px; margin-bottom: 20px; font-size: 0.8rem;
+}
+.status-dot-live {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 8px var(--green); animation: blink 1.5s ease-in-out infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* Stat cards */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+}
+.stat-card.c1::before { background: var(--cyan); }
+.stat-card.c2::before { background: var(--pink); }
+.stat-card.c3::before { background: var(--purple); }
+.stat-card.c4::before { background: var(--gold); }
+.stat-label { font-size: 0.55rem; letter-spacing: 2px; color: rgba(255,255,255,0.4); margin-bottom: 8px; }
+.stat-value { font-family: var(--display); font-size: 1.6rem; font-weight: 700; }
+.stat-card.c1 .stat-value { color: var(--cyan); text-shadow: 0 0 16px rgba(0,245,255,0.4); }
+.stat-card.c2 .stat-value { color: var(--pink); text-shadow: 0 0 16px rgba(255,45,120,0.4); }
+.stat-card.c3 .stat-value { color: var(--purple); text-shadow: 0 0 16px rgba(180,77,255,0.4); }
+.stat-card.c4 .stat-value { color: var(--gold); text-shadow: 0 0 16px rgba(255,215,0,0.4); }
+
+/* Cards / panels */
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px;
+}
+.panel-title {
+  font-size: 0.7rem; letter-spacing: 3px; color: rgba(255,255,255,0.5); margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+/* Analytics row */
+.analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 14px; }
+.analytics-cell { text-align: center; padding: 14px; background: var(--panel2); border-radius: 6px; }
+.analytics-cell .num { font-family: var(--display); font-size: 1.3rem; color: var(--cyan); text-shadow: 0 0 12px rgba(0,245,255,0.4); }
+.analytics-cell .lbl { font-size: 0.55rem; letter-spacing: 2px; color: rgba(255,255,255,0.4); margin-top: 6px; }
+
+/* Table */
+.search-bar {
+  width: 100%; padding: 10px 14px; margin-bottom: 14px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+  color: #fff; font-family: var(--mono); font-size: 0.85rem; outline: none;
+}
+.search-bar:focus { border-color: var(--cyan); }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th { text-align: left; padding: 10px 12px; font-size: 0.6rem; letter-spacing: 2px; color: rgba(255,255,255,0.4); border-bottom: 1px solid var(--border); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.row-clickable { cursor: pointer; }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; }
+.pill.online { background: rgba(0,255,153,0.1); color: var(--green); }
+.pill.offline { background: rgba(255,51,85,0.1); color: var(--red); }
+.pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.action-btn {
+  font-size: 0.65rem; letter-spacing: 1px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel2); color: #fff; margin-right: 4px;
+  transition: all 0.15s;
+}
+.action-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.action-btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+/* User detail */
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 14px; margin-bottom: 20px; }
+.detail-cell { background: var(--panel2); border-radius: 6px; padding: 14px; }
+.detail-cell .lbl { font-size: 0.55rem; letter-spacing: 2px; color: rgba(255,255,255,0.4); margin-bottom: 6px; }
+.detail-cell .val { font-family: var(--display); font-size: 1.05rem; }
+
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-row button {
+  padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer;
+  background: var(--panel2); color: #fff; font-family: var(--mono); font-size: 0.8rem; letter-spacing: 1px;
+  transition: all 0.15s;
+}
+.btn-row button:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-row button.danger:hover { border-color: var(--red); color: var(--red); }
+.btn-row button.primary {
+  background: linear-gradient(90deg, var(--cyan), var(--purple));
+  border: none; color: #000; font-weight: 700;
+}
+
+/* Live monitor */
+.monitor-feed { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.monitor-item {
+  padding: 10px 14px; border-radius: 6px; background: var(--panel2); border-left: 3px solid var(--cyan);
+  font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center;
+  animation: slideIn 0.3s ease;
+}
+@keyframes slideIn { from{opacity:0; transform:translateX(-10px)} to{opacity:1; transform:translateX(0)} }
+.monitor-item.paired { border-left-color: var(--green); }
+.monitor-item.disconnected, .monitor-item.logged_out { border-left-color: var(--red); }
+.monitor-item.reconnected { border-left-color: var(--purple); }
+.monitor-time { font-size: 0.65rem; color: rgba(255,255,255,0.3); }
+
+/* Settings */
+.settings-row {
+  display: flex; justify-content: space-between; align-items: center; padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-label { font-size: 0.85rem; }
+.settings-sub { font-size: 0.65rem; color: rgba(255,255,255,0.35); margin-top: 2px; }
+
+.toggle { width: 44px; height: 24px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--border); position: relative; cursor: pointer; }
+.toggle.on { background: var(--green); border-color: var(--green); }
+.toggle::after {
+  content:''; position:absolute; width:18px; height:18px; border-radius:50%; background:#fff;
+  top:2px; left:2px; transition: left 0.2s;
+}
+.toggle.on::after { left: 23px; }
+
+/* Broadcast */
+textarea.broadcast-input {
+  width: 100%; min-height: 100px; padding: 12px; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 6px; color: #fff; font-family: var(--mono); font-size: 0.85rem; resize: vertical; outline: none; margin-bottom: 12px;
+}
+textarea.broadcast-input:focus { border-color: var(--cyan); }
+
+/* Alerts */
+.alert-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 6px;
+  background: var(--panel2); margin-bottom: 8px; font-size: 0.8rem;
+}
+
+/* Logs */
+.log-line {
+  font-size: 0.72rem; padding: 6px 0; border-bottom: 1px solid var(--border);
+  color: rgba(255,255,255,0.6); white-space: pre-wrap; word-break: break-word;
+}
+
+/* Empty state */
+.empty-state { text-align: center; padding: 40px 20px; color: rgba(255,255,255,0.25); font-size: 0.8rem; letter-spacing: 1px; }
+
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+  align-items: center; justify-content: center; padding: 16px;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 24px;
+  max-width: 420px; width: 100%; max-height: 80vh; overflow-y: auto;
+}
+
+/* Responsive */
+@media (max-width: 720px) {
+  .sidebar { width: 60px; }
+  .sidebar-logo { font-size: 0; padding: 0 0 20px; }
+  .sidebar-logo::before { content: 'LL'; font-size: 0.9rem; }
+  .nav-item span.label { display: none; }
+  .nav-item { justify-content: center; padding: 14px 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════════ LOGIN ════════ -->
+<div class="login-shell" id="loginShell">
+  <div class="login-card">
+    <div class="login-logo">LADY LIYA</div>
+    <div class="login-sub">ADMIN ACCESS</div>
+    <input type="password" id="passwordInput" placeholder="Enter admin password" autocomplete="off"/>
+    <button id="loginBtn">LOGIN</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- ════════ DASHBOARD ════════ -->
+<div class="dash" id="dash">
+  <div class="sidebar">
+    <div class="sidebar-logo">LADY LIYA</div>
+    <div class="nav-item active" data-page="home"><span>🏠</span><span class="label">Dashboard</span></div>
+    <div class="nav-item" data-page="users"><span>👥</span><span class="label">Paired Users</span></div>
+    <div class="nav-item" data-page="monitor"><span>📊</span><span class="label">Live Monitor</span></div>
+    <div class="nav-item" data-page="storage"><span>💾</span><span class="label">Storage</span></div>
+    <div class="nav-item" data-page="analytics"><span>📈</span><span class="label">Analytics</span></div>
+    <div class="nav-item" data-page="broadcast"><span>📢</span><span class="label">Broadcast</span></div>
+    <div class="nav-item" data-page="settings"><span>⚙️</span><span class="label">Settings</span></div>
+    <div class="nav-item" data-page="logs"><span>📜</span><span class="label">Logs</span></div>
+    <div class="nav-spacer"></div>
+    <div class="nav-item logout" id="logoutBtn"><span>🚪</span><span class="label">Logout</span></div>
+  </div>
+
+  <div class="main">
+
+    <!-- HOME -->
+    <div class="page active" id="page-home">
+      <div class="page-title">DASHBOARD HOME</div>
+      <div class="status-banner" id="statusBanner"><div class="status-dot-live"></div> Server Status: ONLINE</div>
+      <div class="status-banner" id="liveStatusBanner" style="display:none; background:rgba(255,150,0,0.1); border-color:rgba(255,150,0,0.4);">⚠️ Live updates disconnected — showing last known values. Retrying...</div>
+
+      <div class="stats-grid">
+        <div class="stat-card c1"><div class="stat-label">TOTAL USERS</div><div class="stat-value" id="s-total">0</div></div>
+        <div class="stat-card c2"><div class="stat-label">ACTIVE</div><div class="stat-value" id="s-active">0</div></div>
+        <div class="stat-card c3"><div class="stat-label">SLOTS</div><div class="stat-value" id="s-slots">0/100</div></div>
+        <div class="stat-card c4"><div class="stat-label">UPTIME</div><div class="stat-value" id="s-uptime">0s</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">PAIRINGS</div>
+        <div class="analytics-grid">
+          <div class="analytics-cell"><div class="num" id="p-today">0</div><div class="lbl">TODAY</div></div>
+          <div class="analytics-cell"><div class="num" id="p-week">0</div><div class="lbl">THIS WEEK</div></div>
+          <div class="analytics-cell"><div class="num" id="p-month">0</div><div class="lbl">THIS MONTH</div></div>
+          <div class="analytics-cell"><div class="num" id="p-total">0</div><div class="lbl">ALL TIME</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">RECENT ACTIVITY</div>
+        <div class="monitor-feed" id="home-feed"></div>
+      </div>
+    </div>
+
+    <!-- USERS -->
+    <div class="page" id="page-users">
+      <div class="page-title">PAIRED USERS</div>
+      <input type="text" class="search-bar" id="userSearch" placeholder="Search phone number..."/>
+      <div class="panel" style="padding:0; overflow-x:auto;">
+        <table>
+          <thead><tr><th>PHONE NUMBER</th><th>STATUS</th><th>PAIRED AT</th><th>ACTIONS</th></tr></thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- USER DETAIL (modal) -->
+    <div class="modal-overlay" id="userModalOverlay">
+      <div class="modal">
+        <div class="page-title" style="margin-bottom:14px;">USER DETAILS</div>
+        <div class="detail-grid" id="userDetailGrid"></div>
+        <div class="btn-row">
+          <button class="danger" id="ud-logout">Logout</button>
+          <button id="ud-restart">Restart</button>
+          <button class="danger" id="ud-delete">Delete Session</button>
+          <button class="primary" id="ud-close">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MONITOR -->
+    <div class="page" id="page-monitor">
+      <div class="page-title">LIVE MONITOR</div>
+      <div class="status-banner"><div class="status-dot-live"></div> Auto-refreshing in real time</div>
+      <div class="panel">
+        <div class="panel-title">EVENT FEED</div>
+        <div class="monitor-feed" id="monitor-feed"></div>
+      </div>
+    </div>
+
+    <!-- STORAGE -->
+    <div class="page" id="page-storage">
+      <div class="page-title">SESSION STORAGE</div>
+      <div class="stats-grid">
+        <div class="stat-card c1"><div class="stat-label">TOTAL SESSIONS</div><div class="stat-value" id="st-total">0</div></div>
+        <div class="stat-card c2"><div class="stat-label">REDIS</div><div class="stat-value" id="st-redis" style="font-size:1rem;">—</div></div>
+        <div class="stat-card c3"><div class="stat-label">MEMORY USED</div><div class="stat-value" id="st-mem" style="font-size:1rem;">—</div></div>
+        <div class="stat-card c4"><div class="stat-label">LAST BACKUP</div><div class="stat-value" id="st-backup" style="font-size:0.95rem;">—</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">ACTIONS</div>
+        <div class="btn-row">
+          <button class="primary" id="st-backup-now">Backup Now</button>
+          <button class="primary" id="st-export">Export Sessions</button>
+          <button id="st-clean">Clean Old Sessions</button>
+          <button id="st-refresh">Refresh</button>
+        </div>
+        <div class="login-error" id="storageResult" style="color:var(--green); margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="page" id="page-analytics">
+      <div class="page-title">ANALYTICS</div>
+      <div class="panel">
+        <div class="panel-title">PAIRINGS OVERVIEW</div>
+        <div class="analytics-grid">
+          <div class="analytics-cell"><div class="num" id="a-today">0</div><div class="lbl">TODAY</div></div>
+          <div class="analytics-cell"><div class="num" id="a-week">0</div><div class="lbl">THIS WEEK</div></div>
+          <div class="analytics-cell"><div class="num" id="a-month">0</div><div class="lbl">THIS MONTH</div></div>
+          <div class="analytics-cell"><div class="num" id="a-total">0</div><div class="lbl">ALL TIME</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">SYSTEM</div>
+        <div class="analytics-grid">
+          <div class="analytics-cell"><div class="num" id="a-online">0</div><div class="lbl">ONLINE NOW</div></div>
+          <div class="analytics-cell"><div class="num" id="a-slots">0/100</div><div class="lbl">SLOTS USED</div></div>
+          <div class="analytics-cell"><div class="num" id="a-uptime">0s</div><div class="lbl">UPTIME</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BROADCAST -->
+    <div class="page" id="page-broadcast">
+      <div class="page-title">BROADCAST</div>
+      <div class="panel">
+        <div class="panel-title">SEND TO ALL CONNECTED BOTS</div>
+        <textarea class="broadcast-input" id="broadcastMsg" placeholder="Server maintenance tonight at 11PM."></textarea>
+        <div class="btn-row">
+          <button class="primary" id="broadcastBtn">Send Broadcast</button>
+        </div>
+             <div class="login-error" id="broadcastResult" style="color:var(--green); margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="page-title">SETTINGS</div>
+      <div class="panel">
+        <div class="settings-row">
+          <div><div class="settings-label">Maximum Slots</div><div class="settings-sub">Total pairing capacity</div></div>
+          <input type="number" id="set-maxSlots" class="search-bar" style="width:90px; text-align:center; margin:0; padding:8px;" min="1"/>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">Auto Reconnect</div><div class="settings-sub">Restore sessions on restart</div></div>
+          <div class="toggle" id="set-autoReconnect"></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">Auto Backup</div><div class="settings-sub">Periodic metadata snapshot (every 30 min)</div></div>
+          <div class="toggle" id="set-autoBackup"></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">Pair Timeout</div><div class="settings-sub">Seconds before code expires</div></div>
+          <input type="number" id="set-pairTimeoutSeconds" class="search-bar" style="width:90px; text-align:center; margin:0; padding:8px;" min="10"/>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-label">Maintenance Mode</div><div class="settings-sub">Block new pairings (existing sessions stay online)</div></div>
+          <div class="toggle" id="set-maintenanceMode"></div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="set-save">Save Settings</button>
+      </div>
+      <div class="login-error" id="settingsResult" style="color:var(--green); margin-top:10px;"></div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="page" id="page-logs">
+      <div class="page-title">SYSTEM LOGS</div>
+      <div class="panel">
+        <div class="panel-title">RECENT EVENTS <button class="action-btn" id="logsRefresh">Refresh</button></div>
+        <div id="logsContainer"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const ADMIN_TOKEN_KEY = 'lady_liya_admin_token';
+
+// ── Login ──
+const loginShell = document.getElementById('loginShell');
+const dash = document.getElementById('dash');
+const passwordInput = document.getElementById('passwordInput');
+const loginBtn = document.getElementById('loginBtn');
+const loginError = document.getElementById('loginError');
+
+async function tryLogin() {
+  const password = passwordInput.value.trim();
+  if (!password) return;
+  loginError.textContent = '';
+  try {
+    const res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ password }),
+      credentials: 'include'
+    });
+    const data = await res.json();
+    if (data.success) {
+      sessionStorage.setItem(ADMIN_TOKEN_KEY, 'authenticated');
+      showDashboard();
+    } else {
+      loginError.textContent = data.error || 'Login failed';
+    }
+  } catch {
+    loginError.textContent = 'Connection error';
+  }
+}
+
+loginBtn.addEventListener('click', tryLogin);
+passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' });
+  sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  dash.classList.remove('active');
+  loginShell.style.display = 'flex';
+});
+
+function showDashboard() {
+  loginShell.style.display = 'none';
+  dash.classList.add('active');
+  loadHome();
+  initSocket();
+}
+
+// Auto-login if session token present
+if (sessionStorage.getItem(ADMIN_TOKEN_KEY)) {
+  fetch('/api/admin/stats', { credentials: 'include' }).then(r => {
+    if (r.ok) {
+      showDashboard();
+    } else {
+      // stale/rejected session — drop it and show the login screen instead
+      // of silently sitting on a blank page
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      loginError.textContent = `Session expired or rejected (${r.status}) — please log in again.`;
+    }
+  }).catch(err => {
+    loginError.textContent = 'Could not reach the server: ' + err.message;
+  });
+}
+
+// ── Navigation ──
+document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    item.classList.add('active');
+    const page = item.dataset.page;
+    document.getElementById('page-' + page).classList.add('active');
+
+    if (page === 'home') loadHome();
+    if (page === 'users') loadUsers();
+    if (page === 'storage') loadStorage();
+    if (page === 'analytics') loadAnalytics();
+    if (page === 'settings') loadSettings();
+    if (page === 'logs') loadLogs();
+  });
+});
+
+// ── Helpers ──
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+async function api(path, opts = {}) {
+  let res;
+  try {
+    res = await fetch(path, { credentials: 'include', ...opts });
+  } catch (networkErr) {
+    throw new Error(`Network error calling ${path}: ${networkErr.message}`);
+  }
+  if (!res.ok) {
+    let bodyText = '';
+    try { bodyText = JSON.stringify(await res.json()); } catch { bodyText = await res.text().catch(() => ''); }
+    throw new Error(`${res.status} ${res.statusText} on ${path}${bodyText ? ' — ' + bodyText : ''}`);
+  }
+  return res.json();
+}
+
+function showGlobalError(msg) {
+  console.error(msg);
+  let banner = document.getElementById('globalErrorBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'globalErrorBanner';
+    banner.style.cssText = 'position:fixed; bottom:16px; right:16px; max-width:420px; background:#2a0f0f; border:1px solid rgba(255,80,80,0.5); color:#ff9d9d; padding:12px 16px; border-radius:8px; font-size:0.75rem; z-index:9999; box-shadow:0 4px 20px rgba(0,0,0,0.4);';
+    document.body.appendChild(banner);
+  }
+  banner.textContent = '⚠️ ' + msg;
+  banner.style.display = 'block';
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => { banner.style.display = 'none'; }, 10000);
+}
+
+// ── HOME ──
+async function loadHome() {
+  try {
+    const stats = await api('/api/admin/stats');
+    document.getElementById('s-total').textContent = stats.totalUsers;
+    document.getElementById('s-active').textContent = stats.active;
+    document.getElementById('s-slots').textContent = `${stats.active}/${stats.maxSlots}`;
+    document.getElementById('s-uptime').textContent = fmtUptime(stats.uptime);
+    document.getElementById('p-today').textContent = stats.pairingsToday;
+    document.getElementById('p-week').textContent = stats.pairingsWeek;
+    document.getElementById('p-month').textContent = stats.pairingsMonth;
+    document.getElementById('p-total').textContent = stats.pairingsTotal;
+
+    const banner = document.getElementById('statusBanner');
+    if (stats.maintenanceMode) {
+      banner.innerHTML = '<div class="status-dot-live" style="background:var(--gold); box-shadow:0 0 8px var(--gold);"></div> Server Status: MAINTENANCE MODE — new pairings blocked';
+      banner.style.background = 'rgba(255,215,0,0.05)';
+      banner.style.borderColor = 'rgba(255,215,0,0.2)';
+    } else {
+      banner.innerHTML = '<div class="status-dot-live"></div> Server Status: ONLINE';
+      banner.style.background = 'rgba(0,255,153,0.05)';
+      banner.style.borderColor = 'rgba(0,255,153,0.2)';
+    }
+
+    const logs = await api('/api/admin/logs');
+    const feed = document.getElementById('home-feed');
+    feed.innerHTML = '';
+    if (!logs.logs.length) {
+      feed.innerHTML = '<div class="empty-state">No activity yet</div>';
+    } else {
+      logs.logs.slice(0, 8).forEach(ev => feed.appendChild(renderEvent(ev)));
+    }
+  } catch (err) { showGlobalError(err.message); }
+}
+
+function renderEvent(ev) {
+  const div = document.createElement('div');
+  div.className = 'monitor-item ' + ev.type;
+  const labels = {
+    paired: `🟢 New Pair: +${ev.phoneNumber}`,
+    reconnected: `🔄 Reconnected: +${ev.phoneNumber}`,
+    disconnected: `🔴 Disconnected: +${ev.phoneNumber}`,
+    logged_out: `🔴 Logged out: +${ev.phoneNumber}`,
+    restarted: `♻️ Restarted: +${ev.phoneNumber}`,
+    session_deleted: `❌ Session deleted: +${ev.phoneNumber}`,
+    broadcast_sent: `📢 Broadcast sent to ${ev.sent} users`,
+    storage_cleaned: `🧹 Cleaned ${ev.count} old sessions`,
+    backup_completed: `💾 Backup completed (${ev.count} users)`,
+    settings_updated: `⚙️ Settings updated`,
+  };
+  div.innerHTML = `<span>${labels[ev.type] || ev.type}</span><span class="monitor-time">${fmtTime(ev.timestamp)}</span>`;
+  return div;
+}
+
+// ── USERS ──
+let allUsers = [];
+async function loadUsers() {
+  try {
+    const data = await api('/api/admin/users');
+    allUsers = data.users;
+    renderUsers(allUsers);
+  } catch (err) { showGlobalError(err.message); }
+}
+
+function renderUsers(users) {
+  const tbody = document.getElementById('usersTableBody');
+  tbody.innerHTML = '';
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state">No paired users yet</div></td></tr>';
+    return;
+  }
+  users.forEach(u => {
+    const tr = document.createElement('tr');
+    tr.className = 'row-clickable';
+    tr.innerHTML = `
+      <td>+${u.phone}</td>
+      <td><span class="pill ${u.status}"><span class="pill-dot"></span>${u.status === 'online' ? 'Online' : 'Offline'}</span></td>
+      <td>${fmtTime(u.pairedAt)}</td>
+      <td>
+        <button class="action-btn" data-action="view" data-phone="${u.phone}">View</button>
+        <button class="action-btn danger" data-action="logout" data-phone="${u.phone}">Logout</button>
+        <button class="action-btn danger" data-action="delete" data-phone="${u.phone}">Delete</button>
+        <button class="action-btn" data-action="restart" data-phone="${u.phone}">Restart</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const phone = btn.dataset.phone;
+      const action = btn.dataset.action;
+      if (action === 'view') return openUserDetail(phone);
+      if (action === 'logout' && !confirm(`Logout ${phone}?`)) return;
+      if (action === 'delete' && !confirm(`Delete session for ${phone}? This cannot be undone.`)) return;
+      if (action === 'restart' && !confirm(`Restart connection for ${phone}?`)) return;
+
+      try {
+        await api(`/api/admin/users/${phone}/${action}`, { method: 'POST' });
+        loadUsers();
+      } catch (err) { alert('Action failed'); }
+    });
+  });
+}
+
+document.getElementById('userSearch').addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  renderUsers(allUsers.filter(u => u.phone.includes(q)));
+});
+
+// ── USER DETAIL MODAL ──
+const userModal = document.getElementById('userModalOverlay');
+let currentDetailPhone = null;
+
+async function openUserDetail(phone) {
+  try {
+    const u = await api(`/api/admin/users/${phone}`);
+    currentDetailPhone = phone;
+    const grid = document.getElementById('userDetailGrid');
+    grid.innerHTML = `
+      <div class="detail-cell"><div class="lbl">PHONE</div><div class="val">+${u.phone}</div></div>
+      <div class="detail-cell"><div class="lbl">STATUS</div><div class="val">${u.status === 'online' ? '🟢 Online' : '🔴 Offline'}</div></div>
+      <div class="detail-cell"><div class="lbl">CONNECTED</div><div class="val" style="font-size:0.85rem;">${fmtTime(u.lastConnected)}</div></div>
+      <div class="detail-cell"><div class="lbl">MESSAGES RECEIVED</div><div class="val">${u.messagesReceived}</div></div>
+      <div class="detail-cell"><div class="lbl">SESSION</div><div class="val">${u.sessionHealthy ? '✅ Healthy' : '⚠️ Inactive'}</div></div>
+    `;
+    userModal.classList.add('active');
+  } catch (err) { alert('Failed to load user'); }
+}
+
+document.getElementById('ud-close').addEventListener('click', () => userModal.classList.remove('active'));
+
+['logout','restart','delete'].forEach(action => {
+  document.getElementById('ud-' + action).addEventListener('click', async () => {
+    if (!currentDetailPhone) return;
+    if ((action === 'delete' || action === 'logout') && !confirm(`${action} ${currentDetailPhone}?`)) return;
+    try {
+      await api(`/api/admin/users/${currentDetailPhone}/${action}`, { method: 'POST' });
+      userModal.classList.remove('active');
+      loadUsers();
+    } catch { alert('Action failed'); }
+  });
+});
+
+// ── STORAGE ──
+async function loadStorage() {
+  try {
+    const data = await api('/api/admin/storage');
+    document.getElementById('st-total').textContent = data.totalSessions;
+    document.getElementById('st-redis').textContent = data.redisConnected ? '✅ Connected' : '❌ Down';
+    document.getElementById('st-mem').textContent = data.memoryUsed;
+
+    const backupEl = document.getElementById('st-backup');
+    if (data.lastBackup) {
+      backupEl.textContent = fmtTime(data.lastBackup.timestamp);
+    } else {
+      backupEl.textContent = 'Never';
+    }
+  } catch (err) { showGlobalError(err.message); }
+}
+
+document.getElementById('st-backup-now').addEventListener('click', async () => {
+  const resultEl = document.getElementById('storageResult');
+  resultEl.style.color = 'var(--cyan)';
+  resultEl.textContent = 'Backing up...';
+  try {
+    const result = await api('/api/admin/storage/backup', { method: 'POST' });
+    resultEl.style.color = 'var(--green)';
+    resultEl.textContent = `✅ Backup completed (${result.count} users)`;
+    loadStorage();
+  } catch {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = '❌ Backup failed';
+  }
+});
+
+document.getElementById('st-refresh').addEventListener('click', loadStorage);
+
+document.getElementById('st-export').addEventListener('click', async () => {
+  try {
+    const data = await api('/api/admin/storage/export', { method: 'POST' });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lady-liya-export-${Date.now()}.json`;
+    a.click();
+  } catch { alert('Export failed'); }
+});
+
+document.getElementById('st-clean').addEventListener('click', async () => {
+  if (!confirm('Clean sessions with no valid credentials?')) return;
+  try {
+    const result = await api('/api/admin/storage/clean', { method: 'POST' });
+    alert(`Cleaned ${result.cleaned} session(s)`);
+    loadStorage();
+  } catch { alert('Clean failed'); }
+});
+
+// ── ANALYTICS ──
+async function loadAnalytics() {
+  try {
+    const stats = await api('/api/admin/stats');
+    document.getElementById('a-today').textContent = stats.pairingsToday;
+    document.getElementById('a-week').textContent = stats.pairingsWeek;
+    document.getElementById('a-month').textContent = stats.pairingsMonth;
+    document.getElementById('a-total').textContent = stats.pairingsTotal;
+    document.getElementById('a-online').textContent = stats.active;
+    document.getElementById('a-slots').textContent = `${stats.active}/${stats.maxSlots}`;
+    document.getElementById('a-uptime').textContent = fmtUptime(stats.uptime);
+  } catch (err) { showGlobalError(err.message); }
+}
+
+// ── BROADCAST ──
+document.getElementById('broadcastBtn').addEventListener('click', async () => {
+  const message = document.getElementById('broadcastMsg').value.trim();
+  const resultEl = document.getElementById('broadcastResult');
+  if (!message) return;
+  resultEl.textContent = 'Sending...';
+  resultEl.style.color = 'var(--cyan)';
+  try {
+    const result = await api('/api/admin/broadcast', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ message })
+    });
+    resultEl.style.color = 'var(--green)';
+    resultEl.textContent = `✅ Sent to ${result.sent} connected user(s)`;
+  } catch {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = '❌ Broadcast failed';
+  }
+});
+
+// ── SETTINGS ──
+async function loadSettings() {
+  try {
+    const data = await api('/api/admin/settings');
+    const s = data.settings;
+
+    document.getElementById('set-maxSlots').value = s.maxSlots;
+    document.getElementById('set-pairTimeoutSeconds').value = s.pairTimeoutSeconds;
+
+    setToggle('set-autoReconnect', s.autoReconnect);
+    setToggle('set-autoBackup', s.autoBackup);
+    setToggle('set-maintenanceMode', s.maintenanceMode);
+  } catch (err) { showGlobalError(err.message); }
+}
+
+function setToggle(id, on) {
+  const el = document.getElementById(id);
+  el.classList.toggle('on', !!on);
+  el.dataset.value = on ? '1' : '0';
+}
+
+// Click to flip toggles
+['set-autoReconnect','set-autoBackup','set-maintenanceMode'].forEach(id => {
+  document.getElementById(id).addEventListener('click', () => {
+    const el = document.getElementById(id);
+    const newVal = el.dataset.value === '1' ? false : true;
+    setToggle(id, newVal);
+  });
+});
+
+document.getElementById('set-save').addEventListener('click', async () => {
+  const resultEl = document.getElementById('settingsResult');
+  resultEl.textContent = 'Saving...';
+  resultEl.style.color = 'var(--cyan)';
+
+  const payload = {
+    maxSlots: parseInt(document.getElementById('set-maxSlots').value),
+    pairTimeoutSeconds: parseInt(document.getElementById('set-pairTimeoutSeconds').value),
+    autoReconnect: document.getElementById('set-autoReconnect').dataset.value === '1',
+    autoBackup: document.getElementById('set-autoBackup').dataset.value === '1',
+    maintenanceMode: document.getElementById('set-maintenanceMode').dataset.value === '1'
+  };
+
+  try {
+    await api('/api/admin/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    resultEl.style.color = 'var(--green)';
+    resultEl.textContent = '✅ Settings saved';
+  } catch {
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = '❌ Failed to save settings';
+  }
+});
+
+// ── LOGS ──
+async function loadLogs() {
+  try {
+    const data = await api('/api/admin/logs');
+    const container = document.getElementById('logsContainer');
+    container.innerHTML = '';
+    if (!data.logs.length) {
+      container.innerHTML = '<div class="empty-state">No logs yet</div>';
+      return;
+    }
+    data.logs.forEach(ev => {
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      div.textContent = `[${new Date(ev.timestamp).toLocaleString()}] ${ev.type.toUpperCase()} ${JSON.stringify(ev).replace(/[{}]/g,'').replace(/"/g,'')}`;
+      container.appendChild(div);
+    });
+  } catch (err) { showGlobalError(err.message); }
+}
+
+document.getElementById('logsRefresh').addEventListener('click', loadLogs);
+
+// ── LIVE SOCKET (Live Monitor + auto stats refresh) ──
+function initSocket() {
+  if (typeof io === 'undefined') {
+    showGlobalError('Socket.IO client library failed to load (CDN blocked?) — live updates unavailable, falling back to periodic refresh.');
+    setInterval(() => {
+      if (document.getElementById('page-home').classList.contains('active')) loadHome();
+      if (document.getElementById('page-analytics').classList.contains('active')) loadAnalytics();
+    }, 8000);
+    return;
+  }
+
+  const socket = io('/admin', { withCredentials: true });
+  const liveBanner = document.getElementById('liveStatusBanner');
+  let liveConnected = false;
+
+  socket.on('connect', () => {
+    console.log('Admin socket connected');
+    liveConnected = true;
+    liveBanner.style.display = 'none';
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('Admin socket auth failed:', err.message);
+    liveConnected = false;
+    liveBanner.style.display = 'flex';
+  });
+
+  socket.on('disconnect', () => {
+    liveConnected = false;
+    liveBanner.style.display = 'flex';
+  });
+
+  // Fallback: if the live socket is down for any reason (auth cookie
+  // rejected, proxy issue, etc.) the REST-backed stats still refresh
+  // periodically instead of freezing at whatever loaded on page open.
+  setInterval(() => {
+    if (liveConnected) return;
+    if (document.getElementById('page-home').classList.contains('active')) loadHome();
+    if (document.getElementById('page-analytics').classList.contains('active')) loadAnalytics();
+  }, 8000);
+
+  socket.on('live-stats', (data) => {
+    // Update home page stats live
+    if (document.getElementById('page-home').classList.contains('active')) {
+      document.getElementById('s-active').textContent = data.active;
+      document.getElementById('s-slots').textContent = `${data.active}/${data.max}`;
+      document.getElementById('s-uptime').textContent = fmtUptime(data.uptime);
+      document.getElementById('s-total').textContent = data.totalUsers;
+    }
+    if (document.getElementById('page-analytics').classList.contains('active')) {
+      document.getElementById('a-online').textContent = data.active;
+      document.getElementById('a-slots').textContent = `${data.active}/${data.max}`;
+      document.getElementById('a-uptime').textContent = fmtUptime(data.uptime);
+    }
+  });
+
+  socket.on('live-event', (ev) => {
+    // Live monitor feed
+    const monitorFeed = document.getElementById('monitor-feed');
+    const item = renderEvent(ev);
+    monitorFeed.prepend(item);
+    while (monitorFeed.children.length > 50) monitorFeed.removeChild(monitorFeed.lastChild);
+
+    // Also prepend to home feed if active
+    if (document.getElementById('page-home').classList.contains('active')) {
+      const homeFeed = document.getElementById('home-feed');
+      const emptyState = homeFeed.querySelector('.empty-state');
+      if (emptyState) emptyState.remove();
+      homeFeed.prepend(renderEvent(ev));
+      while (homeFeed.children.length > 8) homeFeed.removeChild(homeFeed.lastChild);
+    }
+
+  
+    // Refresh users table if relevant and visible
+    if (document.getElementById('page-users').classList.contains('active')) {
+      loadUsers();
+    }
+  });
+}
+
+</script>
+</body>
+</html>
