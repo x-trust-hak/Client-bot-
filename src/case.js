@@ -221,6 +221,10 @@ const CONFIG_DEFAULTS = {
     goodNightMsg: "🌙 Good Night everyone!\n\nSleep well ❤️ See you tomorrow."
 };
 
+const TRUSTBIT_KEY = "tb_afedf1e14d9c8e46a91281ebe6554f7ca3f70e18";
+const TRUSTBIT_URL = "https://trustbit-api-devtrust-59jq.onrender.com/api";
+
+
 async function getConfig(redisClient, phoneNumber) {
     try {
         const data = await redisClient.hGetAll(`config:${phoneNumber}`);
@@ -1463,6 +1467,46 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 }
                 break;
             }
+
+                // ────────────────────────────────────────────────────────────
+//  IMAGE AI COMMAND  (10 coins)
+// ────────────────────────────────────────────────────────────
+
+case "imagine":
+case "aiart":
+case "genimg": {
+    if (!text) {
+        await conn.sendMessage(m.from, { text: `🎨 Usage: ${prefix}imagine <describe the image>\n\nExample: ${prefix}imagine a futuristic city at night\n\n💰 Cost: 10 coins per use` }, { quoted: m });
+        break;
+    }
+    const imagineProfile = await economy.getProfile(redisClient, m.sender);
+    if (imagineProfile.coins < 10) {
+        await conn.sendMessage(m.from, { text: `❌ Insufficient credits! You need 10 coins for image generation.\n\n💰 Balance: ${economy.formatCoins(imagineProfile.coins)} coins` }, { quoted: m });
+        break;
+    }
+    try {
+        const axios = require("axios");
+        await conn.sendMessage(m.from, { text: "🎨 Generating your image, please wait..." }, { quoted: m });
+        const { data } = await axios.get(`${TRUSTBIT_URL}/zst/v1/ai/image?prompt=${encodeURIComponent(text)}&url=true`, {
+            timeout: 60000,
+            headers: { "x-api-key": TRUSTBIT_KEY }
+        });
+        const imageUrl = data?.data?.imageUrl || data?.imageUrl || data?.url;
+        if (!imageUrl) {
+            await conn.sendMessage(m.from, { text: "⚠️ Image generation failed. Try again." }, { quoted: m });
+            break;
+        }
+        await economy.addCoins(redisClient, m.sender, -10);
+        await conn.sendMessage(m.from, {
+            image: { url: imageUrl },
+            caption: `🎨 *AI Image*\n\n📝 Prompt: ${text}\n\n━━━━━━━━━━━━━━━\n🔮 Model: ${data?.data?.model || 'FLUX'}\n💰 -10 coins deducted`
+        }, { quoted: m });
+    } catch (err) {
+        console.error("Imagine error:", err.message);
+        await conn.sendMessage(m.from, { text: "❌ Image generation is currently unavailable. Try again later." }, { quoted: m });
+    }
+    break;
+}
 
             case "chatbot": {
                 if (!text) {
