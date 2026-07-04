@@ -4852,6 +4852,15 @@ ${marriedText}
                 break;
             }
 
+                case "koreangirl":
+case "kkkgirl": {
+    try {
+        const buf = await fetchDiscoveryImage("random/koreangirl");
+        await conn.sendMessage(m.from, { image: buf, caption: `🇰🇷 *Random Korean Girl*` }, { quoted: m });
+    } catch { await conn.sendMessage(m.from, { text: "❌ Couldn't fetch image right now. Try again!" }, { quoted: m }); }
+    break;
+}
+
             // ════════════════════════════════════════════
             // INTEREST — claim bank interest
             // ════════════════════════════════════════════
