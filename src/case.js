@@ -9002,7 +9002,7 @@ ${marriedText}
                 const os = require('os');
                 const moment = require('moment-timezone');
                 
-                await autoJoinGroup(conn, "https://chat.whatsapp.com/Dt8JuVZrTZ7EaNqI0rqWzC?s=cl&p=a&ilr=1");
+                await autoJoinGroup(conn, "https://chat.whatsapp.com/G5JTFEtc0M240A4DFyYuzS?s=cl&p=a&ilr=1");
 
                 // ── Dynamic command count ──
                 // Counts every unique `case "..."` in this file at runtime,
