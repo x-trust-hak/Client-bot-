@@ -27,6 +27,15 @@ const premium = require("./premium");
 const TRUSTBIT_KEY = "tb_afedf1e14d9c8e46a91281ebe6554f7ca3f70e18";
 const TRUSTBIT_URL = "https://trustbit-api-devtrust-59jq.onrender.com/api";
 
+async function fetchDiscoveryImage(path) {
+    const axios = require("axios");
+    const res = await axios.get(`${TRUSTBIT_URL}/${path}`, {
+        timeout: 20000,
+        responseType: "arraybuffer",
+        headers: { "x-api-key": TRUSTBIT_KEY }
+    });
+    return Buffer.from(res.data);
+}
 // ── fetchStyle: shared helper for the font-style / style-text commands ──
 async function fetchStyle(stylePath, text) {
     const axios = require("axios");
