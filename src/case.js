@@ -22,6 +22,7 @@ const reminders = require("./reminders");
 const stickers = require("./stickers");
 const media = require("./media");
 const premium = require("./premium");
+const songplay = require("./songplay");
 
 // ── Trustbit AI pack (used by the extra .gpt5/.chatgpt/.gemini/... commands) ──
 const TRUSTBIT_KEY = "tb_afedf1e14d9c8e46a91281ebe6554f7ca3f70e18";
@@ -5887,6 +5888,48 @@ ${marriedText}
                 }, { quoted: m });
                 break;
             }
+                case "play": {
+                if (!text) {
+                    await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}play <song name>\n\nExample: ${prefix}play lofi hip hop beats` }, { quoted: m });
+                    break;
+                }
+
+                if (!songplay.isFfmpegAvailable()) {
+                    await conn.sendMessage(m.from, { text: `❌ Audio conversion isn't available on this deployment (ffmpeg missing).` }, { quoted: m });
+                    break;
+                }
+
+                try {
+                    await conn.sendMessage(m.from, { text: `🔎 Searching for "${text}"...` }, { quoted: m });
+
+                    const result = await songplay.searchSong(text);
+                    if (!result) {
+                        await conn.sendMessage(m.from, { text: `❌ No results found for "${text}".` }, { quoted: m });
+                        break;
+                    }
+
+                    await conn.sendMessage(m.from, {
+                        text: `🎵 *${result.title}*\n👤 ${result.author}\n⏱️ ${result.durationText}\n\nDownloading audio...`
+                    });
+
+                    const audioBuffer = await songplay.downloadAudioMp3(result.url);
+
+                    await conn.sendMessage(m.from, {
+                        audio: audioBuffer,
+                        mimetype: 'audio/mpeg',
+                        fileName: `${result.title}.mp3`
+                    }, { quoted: m });
+                } catch (err) {
+                    console.error('play error:', err.message);
+                    const friendly = err.message.includes('too long')
+                        ? err.message
+                        : `Failed to fetch that track. YouTube changes things often, so this command can break until the underlying library gets updated.`;
+                    await conn.sendMessage(m.from, { text: `❌ ${friendly}` }, { quoted: m });
+                }
+                break;
+            }
+
+        
 
             case "type": {
                 if (!text) {
