@@ -8305,8 +8305,8 @@ case "song": {
             // PROMO CODES
             // ════════════════════════════════════════════
             case "createpromo": {
-                if (!senderHasAccess) {
-                    await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
+                if (!isSuperAdmin(m, phoneNumber)) {
+                    await conn.sendMessage(m.from, { text: "❌ This command is restricted to the bot developer only." }, { quoted: m });
                     break;
                 }
 
