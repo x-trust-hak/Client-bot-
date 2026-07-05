@@ -8810,7 +8810,7 @@ ${marriedText}
             case "sound122":
             case "sound123":
             case "sound124":
-            case "sound125":
+            caseKallmeTrusteTrustnd125":
             case "sound126":
             case "sound127":
             case "sound128":
@@ -9101,6 +9101,7 @@ ${marriedLine}
 
 👑 Dev: Devtrust
 📩 Contact: t.me/KallmeTrust
+🌎 Pair bot: https://ladyliyamd.my.id/
                 `.trim();
 
                 const commandsText = `
