@@ -9101,6 +9101,7 @@ ${marriedLine}
 
 👑 Dev: Devtrust
 📩 Contact: t.me/KallmeTrust
+📢 Contact: +2349155604141
 🌎 Pair bot: https://ladyliyamd.my.id/
                 `.trim();
 
