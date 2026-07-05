@@ -5927,7 +5927,7 @@ ${marriedText}
                     await conn.sendMessage(m.from, { text: `❌ ${friendly}` }, { quoted: m });
                 }
                 break;
-            }*/
+            }
 
                 case 'play': {
   try {
@@ -5993,7 +5993,72 @@ ${marriedText}
     reply('❌ Failed to fetch music. Try again later.')
   }
 }
- break
+ break*/
+
+     case "play":
+case "song": {
+    if (!text) {
+        await conn.sendMessage(m.from, {
+            text: `❌ Usage: ${prefix}${command} <song name>\nExample: ${prefix}${command} Bye Bye\n\n${prefix}play — sends thumbnail + info + audio\n${prefix}song — sends audio only`
+        }, { quoted: m });
+        break;
+    }
+
+    // Loading reaction
+    await conn.sendMessage(m.from, { react: { text: '⏳', key: m.key } });
+
+    try {
+        const axios = require('axios');
+        const { data } = await axios.get(
+            `https://apis.davidcyril.name.ng/play?query=${encodeURIComponent(text)}`,
+            { timeout: 30000 }
+        );
+
+        if (!data?.status || !data?.result) {
+            await conn.sendMessage(m.from, { react: { text: '❌', key: m.key } });
+            await conn.sendMessage(m.from, { text: `❌ No results found for *"${text}"*. Try a different search.` }, { quoted: m });
+            break;
+        }
+
+        const song = data.result;
+
+        // .play: thumbnail card + audio
+        if (command === 'play') {
+            const caption =
+                `╭───〔 🎵 *LADY LIYA MUSIC* 〕───⬣\n` +
+                `┃ 📌 *Title:* ${song.title}\n` +
+                `┃ ⏳ *Duration:* ${song.duration}\n` +
+                `┃ 👀 *Views:* ${Number(song.views).toLocaleString()}\n` +
+                `┃ 📅 *Published:* ${song.published}\n` +
+                `┃ 🔗 *Source:* ${song.video_url}\n` +
+                `╰──────────────⬣\n\n` +
+                `_Audio coming right up..._`;
+
+            await conn.sendMessage(m.from, {
+                image: { url: song.thumbnail },
+                caption
+            }, { quoted: m });
+        }
+
+        // Send audio (both .play and .song)
+        await conn.sendMessage(m.from, {
+            audio: { url: song.download_url },
+            mimetype: 'audio/mpeg',
+            fileName: `${song.title}.mp3`,
+            ptt: false
+        }, { quoted: m });
+
+        await conn.sendMessage(m.from, { react: { text: '✅', key: m.key } });
+
+    } catch (err) {
+        console.error(`${command} error:`, err.message);
+        await conn.sendMessage(m.from, { react: { text: '❌', key: m.key } });
+        await conn.sendMessage(m.from, {
+            text: `❌ Failed to fetch that track. The music API may be temporarily unavailable — try again in a moment.`
+        }, { quoted: m });
+    }
+    break;
+}
 
         
 
