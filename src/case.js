@@ -9691,7 +9691,7 @@ ${marriedLine}
 
                 // ── Bot display picture: per-session custom image set via
                 // .editbotpic, falling back to the default branding image ──
-                let menuImage = { url: "https://i.ibb.co/vvw7nZj9/fddcfb07c80a.jpg" };
+                let menuImage = { url: "https://i.ibb.co/0y3cYMs6/image-1783217372871-jpg.jpg" };
                 try {
                     const customPic = await redisClient.get(`botpic:${phoneNumber}`);
                     if (customPic) menuImage = Buffer.from(customPic, 'base64');
