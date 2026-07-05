@@ -5888,7 +5888,7 @@ ${marriedText}
                 }, { quoted: m });
                 break;
             }
-                case "play": {
+               /* case "play": {
                 if (!text) {
                     await conn.sendMessage(m.from, { text: `❌ Usage: ${prefix}play <song name>\n\nExample: ${prefix}play lofi hip hop beats` }, { quoted: m });
                     break;
@@ -5927,7 +5927,73 @@ ${marriedText}
                     await conn.sendMessage(m.from, { text: `❌ ${friendly}` }, { quoted: m });
                 }
                 break;
-            }
+            }*/
+
+                case 'play': {
+  try {
+    const axios = require('axios')
+
+    const query = args.join(' ')
+    if (!query) return reply('❌ Please provide a song name\nExample: .play bye bye')
+
+    // loading react
+    await conn.sendMessage(from, {
+      react: { text: '⏳', key: m.key }
+    })
+
+    const { data } = await axios.get(
+      `https://apis.davidcyril.name.ng/play?query=${encodeURIComponent(query)}`
+    )
+
+    if (!data.status || !data.result) {
+      await conn.sendMessage(from, {
+        react: { text: '❌', key: m.key }
+      })
+      return reply('❌ Song not found')
+    }
+
+    const song = data.result
+
+    const caption = `
+╭───〔 🎵 PLAY MUSIC 〕───⬣
+┃ 📌 *Title:* ${song.title}
+┃ ⏳ *Duration:* ${song.duration}
+┃ 👀 *Views:* ${song.views.toLocaleString()}
+┃ 📅 *Published:* ${song.published}
+┃ 🔗 *Video:* ${song.video_url}
+╰──────────────⬣
+`.trim()
+
+    // send thumbnail + info
+    await conn.sendMessage(from, {
+      image: { url: song.thumbnail },
+      caption
+    }, { quoted: m })
+
+    // send audio
+    await conn.sendMessage(from, {
+      audio: { url: song.download_url },
+      mimetype: 'audio/mpeg',
+      fileName: `${song.title}.mp3`,
+      ptt: false
+    }, { quoted: m })
+
+    // success react
+    await conn.sendMessage(from, {
+      react: { text: '✅', key: m.key }
+    })
+
+  } catch (err) {
+    console.error(err)
+
+    await conn.sendMessage(from, {
+      react: { text: '❌', key: m.key }
+    })
+
+    reply('❌ Failed to fetch music. Try again later.')
+  }
+}
+ break
 
         
 
