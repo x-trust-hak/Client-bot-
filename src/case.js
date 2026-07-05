@@ -1903,6 +1903,65 @@ module.exports = async (conn, m, chatUpdate, ctx = {}) => {
                 }
                 break;
             }
+                case "vv":
+case "vvgh": {
+    if (!senderHasAccess) {
+        await conn.sendMessage(m.from, { text: "❌ Owner/Sudo only command." }, { quoted: m });
+        break;
+    }
+    if (!m.quoted) {
+        await conn.sendMessage(m.from, { text: `❌ Reply to a view-once image, video, or voice note with ${prefix}vv` }, { quoted: m });
+        break;
+    }
+
+    try {
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+
+        // Unwrap all known view-once wrapper shapes WhatsApp uses.
+        // Current clients send viewOnceMessageV2/V2Extension — the old
+        // viewOnceMessage format is rare but still worth handling.
+        // Also handle plain imageMessage/videoMessage with viewOnce: true flag.
+        const quoted = m.quoted;
+        const rawViewOnce =
+            quoted.message?.viewOnceMessageV2?.message ||
+            quoted.message?.viewOnceMessageV2Extension?.message ||
+            quoted.message?.viewOnceMessage?.message ||
+            (quoted.mtype === 'imageMessage' ? { imageMessage: quoted } : null) ||
+            (quoted.mtype === 'videoMessage' ? { videoMessage: quoted } : null) ||
+            (quoted.mtype === 'audioMessage' ? { audioMessage: quoted } : null);
+
+        if (!rawViewOnce) {
+            await conn.sendMessage(m.from, { text: `❌ That doesn't look like a view-once message. Reply directly to the view-once media.` }, { quoted: m });
+            break;
+        }
+
+        const innerType = Object.keys(rawViewOnce)[0];
+        const buffer = await downloadMediaMessage({ message: rawViewOnce }, 'buffer', {});
+
+        if (!buffer) {
+            await conn.sendMessage(m.from, { text: `❌ Failed to read that media. Try again.` }, { quoted: m });
+            break;
+        }
+
+        const senderTag = `@${m.quoted.sender?.split('@')[0] || 'unknown'}`;
+        const credit = `👁️ *View-once revealed*\nSent by: ${senderTag}`;
+
+        if (innerType === 'imageMessage') {
+            await conn.sendMessage(m.from, { image: buffer, caption: `🖼️ ${credit}`, mentions: [m.quoted.sender] }, { quoted: m });
+        } else if (innerType === 'videoMessage') {
+            await conn.sendMessage(m.from, { video: buffer, caption: `🎥 ${credit}`, mentions: [m.quoted.sender] }, { quoted: m });
+        } else if (innerType === 'audioMessage') {
+            await conn.sendMessage(m.from, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
+        } else {
+            await conn.sendMessage(m.from, { text: `❌ Only images, videos, and voice notes are supported.` }, { quoted: m });
+        }
+
+    } catch (err) {
+        console.error('vv error:', err.message);
+        await conn.sendMessage(m.from, { text: `❌ Something went wrong. Try again.` }, { quoted: m });
+    }
+    break;
+}
 
             case "unshorturl": {
                 if (!text) {
