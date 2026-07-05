@@ -47,7 +47,9 @@ For any issues, contact the Dev:
 ✈️ t.me/KallmeTrust
 
 📢 Telegram channel:
-https://t.me/TrustBitOfficial`;
+https://t.me/TrustBitOfficial
+
+📢 Whatsapp channel: https://whatsapp.com/channel/0029Vb7sRGNLikgHE7DxEu1d`;
 
 // ── Admin event emitter (so server.js can broadcast live events) ──
 const { EventEmitter } = require('events');
