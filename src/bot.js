@@ -8,27 +8,39 @@ const {
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const { createClient } = require('redis');
-const { useRedisAuthState } = require('./redisAuthState');
+const { useFileAuthState } = require('./fileAuthState');
 
-// ── Redis client (singleton) ──────────────────────────────
+// ── Redis client (singleton) ── NOW OPTIONAL, ONLY FOR METADATA ──
 let redis;
 
 async function getRedis() {
   if (redis) return redis;
 
-  redis = createClient({
-    url: process.env.REDIS_URL,
-    socket: {
-      reconnectStrategy: (attempts) => Math.min(attempts * 100, 3000)
-    }
-  });
+  // If REDIS_URL is not set, Redis is optional for metadata storage
+  if (!process.env.REDIS_URL) {
+    console.log('⚠️ REDIS_URL not set — running in file-based mode only (metadata storage disabled)');
+    return null;
+  }
 
-  redis.on('error', (err) => console.error('Redis error:', err));
-  redis.on('connect', () => console.log('✅ Redis connected'));
-  redis.on('reconnecting', () => console.log('🔄 Redis reconnecting...'));
+  try {
+    redis = createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        reconnectStrategy: (attempts) => Math.min(attempts * 100, 3000)
+      }
+    });
 
-  await redis.connect();
-  return redis;
+    redis.on('error', (err) => console.error('Redis error:', err));
+    redis.on('connect', () => console.log('✅ Redis connected'));
+    redis.on('reconnecting', () => console.log('🔄 Redis reconnecting...'));
+
+    await redis.connect();
+    return redis;
+  } catch (err) {
+    console.error('Failed to connect to Redis:', err.message);
+    console.log('⚠️ Continuing without Redis — sessions will use file storage only');
+    return null;
+  }
 }
 
 // ── Active connections ────────────────────────────────────
@@ -53,43 +65,6 @@ const genericDisconnectRetries = new Map(); // phoneNumber -> consecutive count
 const MAX_GENERIC_RETRIES = 6;
 function genericBackoffMs(attempt) {
   return Math.min(5000 * Math.pow(2, attempt - 1), 5 * 60 * 1000); // 5s, 10s, 20s... capped at 5min
-}
-
-// ── Cross-process session lock ─────────────────────────────
-// The `connections` Map above only protects against duplicate sockets
-// WITHIN this one process. It has no idea if a DIFFERENT process
-// instance (e.g. the previous one, mid-shutdown during a Render
-// restart/redeploy) is also holding a live socket for the same
-// phoneNumber. Two live sockets for the same session — even briefly —
-// both write conflicting Signal-protocol state to the same Redis
-// session data, which corrupts it almost immediately. This lock closes
-// that gap by checking Redis itself, not just local memory.
-const SESSION_LOCK_TTL_MS = 45000;
-const SESSION_LOCK_RENEW_MS = 20000;
-
-function sessionLockKey(phoneNumber) {
-  return `lock:session:${phoneNumber}`;
-}
-
-async function acquireSessionLock(redisClient, phoneNumber, ownerId) {
-  const result = await redisClient.set(sessionLockKey(phoneNumber), ownerId, { NX: true, PX: SESSION_LOCK_TTL_MS });
-  return result === 'OK';
-}
-
-async function renewSessionLock(redisClient, phoneNumber, ownerId) {
-  // Only renew if we still actually own it — avoids reviving a lock
-  // that expired and was legitimately claimed by someone else.
-  const current = await redisClient.get(sessionLockKey(phoneNumber));
-  if (current === ownerId) {
-    await redisClient.pExpire(sessionLockKey(phoneNumber), SESSION_LOCK_TTL_MS);
-  }
-}
-
-async function releaseSessionLock(redisClient, phoneNumber, ownerId) {
-  const current = await redisClient.get(sessionLockKey(phoneNumber));
-  if (current === ownerId) {
-    await redisClient.del(sessionLockKey(phoneNumber));
-  }
 }
 
 // ── Owner ────────────────────────────────────────────────
@@ -138,6 +113,11 @@ async function getSettings() {
 
   try {
     const redisClient = await getRedis();
+    if (!redisClient) {
+      settingsCache = { ...DEFAULT_SETTINGS };
+      return settingsCache;
+    }
+
     const raw = await redisClient.get(SETTINGS_KEY);
 
     if (!raw) {
@@ -159,6 +139,8 @@ async function getSettings() {
  */
 async function updateSettings(updates) {
   const redisClient = await getRedis();
+  if (!redisClient) return { ...DEFAULT_SETTINGS, ...updates };
+
   const current = await getSettings();
   const merged = { ...current, ...updates };
 
@@ -174,6 +156,8 @@ async function updateSettings(updates) {
 async function logEvent(type, data = {}) {
   try {
     const redisClient = await getRedis();
+    if (!redisClient) return; // Skip logging if Redis unavailable
+
     const event = {
       type,
       ...data,
@@ -199,7 +183,7 @@ async function logEvent(type, data = {}) {
 }
 
 /**
- * Restore all saved sessions from Redis on startup
+ * Restore all saved sessions from file system on startup
  */
 async function restoreAllSessions() {
   try {
@@ -210,30 +194,37 @@ async function restoreAllSessions() {
       return;
     }
 
-    const redisClient = await getRedis();
-    const keys = await redisClient.keys('session:*');
+    const fs = require('fs').promises;
+    const path = require('path');
+    const sessionsDir = path.join(process.cwd(), 'sessions');
 
-    if (keys.length === 0) {
-      console.log('No saved sessions found in Redis');
+    let sessionFolders = [];
+    try {
+      sessionFolders = await fs.readdir(sessionsDir);
+    } catch (err) {
+      console.log('No saved sessions found in file system');
       return;
     }
 
-    console.log(`🔄 Restoring ${keys.length} session(s) from Redis...`);
+    if (sessionFolders.length === 0) {
+      console.log('No saved sessions found');
+      return;
+    }
 
-    for (const key of keys) {
-      const phoneNumber = key.replace('session:', '');
-      const creds = await redisClient.hGet(key, 'creds');
-      if (!creds) {
+    console.log(`🔄 Restoring ${sessionFolders.length} session(s) from file system...`);
+
+    for (const phoneNumber of sessionFolders) {
+      const credsPath = path.join(sessionsDir, phoneNumber, 'creds.json');
+      try {
+        await fs.stat(credsPath);
+        console.log(`♻️ Reconnecting ${phoneNumber}...`);
+        await startBot(phoneNumber, null).catch(err => {
+          console.error(`Failed to restore ${phoneNumber}:`, err.message);
+        });
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (err) {
         console.log(`⚠️ Skipping ${phoneNumber} — no creds found`);
-        continue;
       }
-
-      console.log(`♻️ Reconnecting ${phoneNumber}...`);
-      await startBot(phoneNumber, null).catch(err => {
-        console.error(`Failed to restore ${phoneNumber}:`, err.message);
-      });
-
-      await new Promise(r => setTimeout(r, 2000));
     }
 
     console.log('✅ Session restore complete');
@@ -254,8 +245,14 @@ async function startBot(phoneNumber, socket) {
 
   // ── Maintenance mode: block NEW pairings (socket present = user-initiated) ──
   if (settings.maintenanceMode && socket && !connections.has(phoneNumber)) {
-    const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
-    if (!redisCheck) {
+    if (redisClient) {
+      const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
+      if (!redisCheck) {
+        console.log(`🚧 Maintenance mode active — blocked new pairing for ${phoneNumber}`);
+        socket.emit('error', 'Server is in maintenance mode. New pairings are temporarily disabled.');
+        return;
+      }
+    } else {
       console.log(`🚧 Maintenance mode active — blocked new pairing for ${phoneNumber}`);
       socket.emit('error', 'Server is in maintenance mode. New pairings are temporarily disabled.');
       return;
@@ -264,8 +261,23 @@ async function startBot(phoneNumber, socket) {
 
   // ── Slot limit: block NEW pairings if at capacity ──
   if (socket && !connections.has(phoneNumber)) {
-    const redisCheck = await redisClient.exists(`session:${phoneNumber}`);
-    if (!redisCheck && connections.size >= settings.maxSlots) {
+    let existingSession = false;
+    if (redisClient) {
+      existingSession = await redisClient.exists(`session:${phoneNumber}`);
+    } else {
+      // Check file system
+      const fs = require('fs').promises;
+      const path = require('path');
+      const credsPath = path.join(process.cwd(), 'sessions', phoneNumber, 'creds.json');
+      try {
+        await fs.stat(credsPath);
+        existingSession = true;
+      } catch {
+        existingSession = false;
+      }
+    }
+
+    if (!existingSession && connections.size >= settings.maxSlots) {
       console.log(`🔒 Slot limit reached (${settings.maxSlots}) — blocked ${phoneNumber}`);
       socket.emit('error', `Server is full (${settings.maxSlots}/${settings.maxSlots} slots). Try again later.`);
       return;
@@ -273,11 +285,6 @@ async function startBot(phoneNumber, socket) {
   }
 
   // ── Prevent duplicate sockets for the same number ──
-  // On Render restart, reconnect/restore logic can call startBot multiple
-  // times for the same number before the old socket finishes closing.
-  // If two sockets stay live for the same session, each one's replies get
-  // echoed back via multi-device sync and picked up by the OTHER socket's
-  // listeners too — causing the bot to "respond to itself" in a loop.
   const existingConn = connections.get(phoneNumber);
   if (existingConn) {
     console.log(`♻️ Closing existing socket for ${phoneNumber} before creating a new one`);
@@ -291,27 +298,10 @@ async function startBot(phoneNumber, socket) {
     } catch (err) {
       console.error(`Error ending socket for ${phoneNumber}:`, err.message);
     }
-    // Release its lock now rather than waiting for the async close event —
-    // otherwise the lock acquisition just below can race against it and
-    // fail even though it's this same process doing the replacing.
-    if (typeof existingConn._releaseSessionLock === 'function') {
-      await existingConn._releaseSessionLock();
-    }
     connections.delete(phoneNumber);
   }
 
-  // ── Cross-process lock: refuse to proceed if another process
-  // instance is already actively holding this session ──
-  const lockOwnerId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const lockAcquired = await acquireSessionLock(redisClient, phoneNumber, lockOwnerId);
-  if (!lockAcquired) {
-    console.log(`🔒 ${phoneNumber} is already being handled by another process instance — refusing to start a second one.`);
-    if (socket) socket.emit('error', 'This session is already active. Please wait a moment and try again.');
-    return;
-  }
-
-  const { state, saveCreds } =
-    await useRedisAuthState(redisClient, phoneNumber);
+  const { state, saveCreds } = await useFileAuthState(phoneNumber);
 
   const { version } = await fetchLatestBaileysVersion();
 
@@ -326,39 +316,6 @@ async function startBot(phoneNumber, socket) {
   });
 
   console.log(`✅ Socket created for ${phoneNumber}`);
-
-  // Keep the lock alive for as long as this socket is meant to be the
-  // sole owner of the session. If this process dies outright (crash,
-  // OOM-kill) without a clean close event, the lock's own TTL expires
-  // on its own after SESSION_LOCK_TTL_MS, so a future process isn't
-  // stuck waiting on a lock nobody's renewing anymore.
-  const lockRenewInterval = setInterval(() => {
-    renewSessionLock(redisClient, phoneNumber, lockOwnerId).catch(err => {
-      console.error(`Lock renewal error for ${phoneNumber}:`, err.message);
-    });
-  }, SESSION_LOCK_RENEW_MS);
-
-  async function releaseThisLock() {
-    clearInterval(lockRenewInterval);
-    try {
-      await releaseSessionLock(redisClient, phoneNumber, lockOwnerId);
-    } catch (err) {
-      console.error(`Lock release error for ${phoneNumber}:`, err.message);
-    }
-  }
-  conn._releaseSessionLock = releaseThisLock; // so a same-process replacement (below) can release it directly instead of waiting on the async close event
-
-  // Decode JID helper
-  const { jidDecode } = require('@whiskeysockets/baileys');
-  conn.decodeJid = (jid) => {
-    if (!jid) return jid;
-    if (/:\d+@/gi.test(jid)) {
-      const decode = jidDecode(jid) || {};
-      return (decode.user && decode.server &&
-        `${decode.user}@${decode.server}`) || jid;
-    }
-    return jid;
-  };
 
   // Save active connection
   connections.set(phoneNumber, conn);
@@ -389,7 +346,6 @@ async function startBot(phoneNumber, socket) {
       if (!conn.authState.creds.registered && connections.get(phoneNumber) === conn) {
         console.log(`⏱️ Pair timeout for ${phoneNumber} — closing unused socket`);
         connections.delete(phoneNumber);
-        releaseThisLock();
         try { conn.end(); } catch {}
         if (socket) socket.emit('error', 'Pairing code expired. Please try again.');
       }
@@ -401,8 +357,7 @@ async function startBot(phoneNumber, socket) {
     const { connection, lastDisconnect } = update;
 
     if (connection === 'close') {
-      const reason =
-        new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
 
       console.log(`Disconnected [${phoneNumber}] reason:`, reason);
 
@@ -411,30 +366,24 @@ async function startBot(phoneNumber, socket) {
         badSessionRetries.set(phoneNumber, attempts);
 
         if (attempts <= MAX_BAD_SESSION_RETRIES) {
-          // Could be a genuinely corrupted session, or could be a brief
-          // blip (common right after pairing). Give it a couple of quick
-          // retries before assuming the worst.
           console.log(`⚠️ Bad session for ${phoneNumber} (attempt ${attempts}/${MAX_BAD_SESSION_RETRIES}) — retrying in 5s before giving up.`);
           connections.delete(phoneNumber);
-          await releaseThisLock(); // free it up now so the retry below can re-acquire it
 
           await logEvent('bad_session_retry', { phoneNumber, attempt: attempts });
-          await redisClient.hSet(`meta:${phoneNumber}`, 'status', 'offline');
 
           setTimeout(() => startBot(phoneNumber, socket), 5000);
         } else {
-          // Persisted across retries — this is what actually produces
-          // "Bad MAC" decryption errors. Retrying further would just keep
-          // failing the same way, so force a clean re-pair instead of
-          // looping forever.
           console.log(`⚠️ Bad session for ${phoneNumber} persisted after ${MAX_BAD_SESSION_RETRIES} retries — clearing and requiring re-pair.`);
           badSessionRetries.delete(phoneNumber);
           connections.delete(phoneNumber);
-          await releaseThisLock();
 
-          await redisClient.del(`session:${phoneNumber}`);
-          await redisClient.del(`meta:${phoneNumber}`);
-          await redisClient.sRem('users:all', phoneNumber);
+          // Delete session files
+          const fs = require('fs').promises;
+          const path = require('path');
+          const sessionDir = path.join(process.cwd(), 'sessions', phoneNumber);
+          try {
+            await fs.rm(sessionDir, { recursive: true });
+          } catch {}
 
           await logEvent('bad_session', { phoneNumber });
 
@@ -445,15 +394,9 @@ async function startBot(phoneNumber, socket) {
         genericDisconnectRetries.set(phoneNumber, attempts);
 
         connections.delete(phoneNumber);
-        await releaseThisLock(); // free it up now so the retry below can re-acquire it
         await logEvent('disconnected', { phoneNumber, reason: reason ?? 'unknown', attempt: attempts });
-        await redisClient.hSet(`meta:${phoneNumber}`, 'status', 'offline');
 
         if (attempts > MAX_GENERIC_RETRIES) {
-          // This has failed the same way too many times in a row — stop
-          // hammering WhatsApp's servers with rapid reconnects (which can
-          // itself get the number flagged) and require a manual re-pair
-          // instead of retrying forever.
           console.log(`⚠️ ${phoneNumber} failed to reconnect ${attempts} times in a row (reason ${reason}) — giving up, needs manual re-pair.`);
           genericDisconnectRetries.delete(phoneNumber);
           await logEvent('reconnect_giveup', { phoneNumber, reason: reason ?? 'unknown', attempts });
@@ -466,11 +409,14 @@ async function startBot(phoneNumber, socket) {
       } else {
         console.log(`${phoneNumber} logged out.`);
         connections.delete(phoneNumber);
-        await releaseThisLock();
 
-        await redisClient.del(`session:${phoneNumber}`);
-        await redisClient.del(`meta:${phoneNumber}`);
-        await redisClient.sRem('users:all', phoneNumber);
+        // Delete session files
+        const fs = require('fs').promises;
+        const path = require('path');
+        const sessionDir = path.join(process.cwd(), 'sessions', phoneNumber);
+        try {
+          await fs.rm(sessionDir, { recursive: true });
+        } catch {}
 
         await logEvent('logged_out', { phoneNumber });
 
@@ -483,25 +429,30 @@ async function startBot(phoneNumber, socket) {
       badSessionRetries.delete(phoneNumber);
       genericDisconnectRetries.delete(phoneNumber);
 
-      // Save/update metadata for admin dashboard
-      const now = Date.now();
-      const existing = await redisClient.hGetAll(`meta:${phoneNumber}`);
-      const isFirstTime = !existing || !existing.pairedAt;
+      // Save metadata to Redis if available
+      if (redisClient) {
+        const now = Date.now();
+        const existing = await redisClient.hGetAll(`meta:${phoneNumber}`);
+        const isFirstTime = !existing || !existing.pairedAt;
 
-      await redisClient.hSet(`meta:${phoneNumber}`, {
-        phoneNumber,
-        status: 'online',
-        lastConnected: String(now),
-        pairedAt: existing?.pairedAt || String(now)
-      });
+        await redisClient.hSet(`meta:${phoneNumber}`, {
+          phoneNumber,
+          status: 'online',
+          lastConnected: String(now),
+          pairedAt: existing?.pairedAt || String(now)
+        });
 
-      // Add to global set of all users ever paired
-      await redisClient.sAdd('users:all', phoneNumber);
+        await redisClient.sAdd('users:all', phoneNumber);
 
-      if (isFirstTime) {
-        await logEvent('paired', { phoneNumber });
+        if (isFirstTime) {
+          await logEvent('paired', { phoneNumber });
+        } else {
+          await logEvent('reconnected', { phoneNumber });
+        }
+      }
 
-        // ── Send welcome message ONLY on first-ever pairing ──
+      // ── Send welcome message ONLY on first-ever pairing ──
+      if (isNewPairing) {
         try {
           await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
             text: WELCOME_MESSAGE
@@ -509,8 +460,6 @@ async function startBot(phoneNumber, socket) {
         } catch (err) {
           console.error(`Failed to send welcome message to ${phoneNumber}:`, err.message);
         }
-      } else {
-        await logEvent('reconnected', { phoneNumber });
       }
 
       // ── Apply Auto Online setting ──
@@ -535,7 +484,7 @@ async function startBot(phoneNumber, socket) {
           } catch (err) {
             console.error(`Failed to follow newsletter ${jid} for ${phoneNumber}:`, err.message);
           }
-          await new Promise(r => setTimeout(r, 1000)); // small gap between follows
+          await new Promise(r => setTimeout(r, 1000));
         }
       } catch (err) {
         console.error('Newsletter auto-follow error:', err.message);
@@ -548,157 +497,21 @@ async function startBot(phoneNumber, socket) {
   // ── Save credentials ───────────────────────────────────
   conn.ev.on('creds.update', saveCreds);
 
-  // ── Messages ───────────────────────────────────────────
-  // ── Status updates (auto-view / auto-react / notify) ────
-  conn.ev.on('messages.upsert', async (chatUpdate) => {
-    try {
-      const m = chatUpdate.messages[0];
-      if (!m.message) return;
-      if (m.key?.remoteJid !== 'status@broadcast') return;
-
-      console.log(`📊 Status event received — fromMe: ${m.key?.fromMe}, participant: ${m.key?.participant}, id: ${m.key?.id}`);
-
-      if (m.key?.fromMe) return; // don't react to our own status
-      if (!m.key?.participant) return; // need to know who posted the status
-
-      const { getConfig } = require('./case');
-      const config = await getConfig(redisClient, phoneNumber);
-
-      console.log(`📊 Config — autoViewStatus: ${config.autoViewStatus}, autoReactStatus: ${config.autoReactStatus}, notifyStatus: ${config.notifyStatus}`);
-
-      // ── Resolve the real contact JID if the poster's JID is in @lid format ──
-      // Baileys' readMessages and status-reaction calls expect a standard
-      // @s.whatsapp.net JID. When the poster's JID is @lid (WhatsApp's newer
-      // privacy/linked-ID format), those calls return successfully (no
-      // exception, log line prints) but silently don't register on
-      // WhatsApp's side — the status never actually shows as viewed or
-      // reacted to. Resolving through onWhatsApp() first fixes that.
-      let participantJid = m.key.participant;
-      if (participantJid.endsWith('@lid')) {
-        try {
-          const [resolved] = await conn.onWhatsApp(participantJid);
-          if (resolved?.jid) {
-            console.log(`🔄 Resolved LID ${participantJid} -> ${resolved.jid}`);
-            participantJid = resolved.jid;
-          } else {
-            console.log(`⚠️ Could not resolve LID ${participantJid}, view/react may not register on WhatsApp's side.`);
-          }
-        } catch (err) {
-          console.error('LID resolution error:', err.message);
-        }
-      }
-
-      // ── Auto View Status ──
-      if (config.autoViewStatus) {
-        try {
-          // Baileys requires the FULL key shape including fromMe: false
-          // for status read receipts to actually register server-side.
-          await conn.readMessages([{
-            remoteJid: m.key.remoteJid,
-            id: m.key.id,
-            participant: participantJid,
-            fromMe: false
-          }]);
-
-          console.log(`👁️ Marked status as read: ${participantJid} (msg ${m.key.id})`);
-
-          if (config.notifyStatus) {
-            const senderTag = `@${participantJid.split('@')[0]}`;
-
-            await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
-              text: `👁️ Viewed status from ${senderTag}`,
-              mentions: [participantJid]
-            });
-          }
-        } catch (err) {
-          console.error('Auto view status error:', err.message);
-        }
-      }
-
-      // ── Auto React to Status ──
-      if (config.autoReactStatus) {
-        try {
-          // statusJidList must include the status poster's JID AND
-          // the bot's own JID — without both, the reaction is sent
-          // but never shows up to the poster.
-          const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-          const statusJidList = [participantJid];
-          if (botJid && botJid !== participantJid) statusJidList.push(botJid);
-
-          await conn.sendMessage(m.key.remoteJid, {
-            react: { text: config.autoReactEmoji, key: { ...m.key, participant: participantJid } }
-          }, {
-            statusJidList
-          });
-
-          console.log(`👍 Reacted to status from ${participantJid} with ${config.autoReactEmoji}`);
-
-          if (config.notifyStatus) {
-            const senderTag = `@${participantJid.split('@')[0]}`;
-
-            await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
-              text: `${config.autoReactEmoji} Reacted to status from ${senderTag}`,
-              mentions: [participantJid]
-            });
-          }
-        } catch (err) {
-          console.error('Auto react status error:', err.message);
-        }
-      }
-    } catch (err) {
-      console.error('Status handler error:', err);
-    }
-  });
-
-  // ── Newsletter auto-react ────────────────────────────────
-  // Reacts with a random emoji to new posts from admin-configured
-  // newsletter channels (see newsletterChannels in global settings).
-  // Separate listener from the main handler since this has nothing
-  // to do with commands and shouldn't get tangled up with them.
-  const NEWSLETTER_REACTION_EMOJIS = ['❤️', '🔥', '👍', '😂', '🙏', '👏', '💯', '✅', '🎉'];
-
-  conn.ev.on('messages.upsert', async (chatUpdate) => {
-    try {
-      const m = chatUpdate.messages[0];
-      if (!m.message) return;
-      if (!m.key?.remoteJid?.endsWith('@newsletter')) return;
-
-      const settings = await getSettings();
-      if (!settings.newsletterAutoReact) return;
-
-      const channels = settings.newsletterChannels || [];
-      if (!channels.includes(m.key.remoteJid)) return; // only react to channels we were told to follow
-
-      const serverId = m.key.server_id || m.newsletterServerId || m.key.id;
-      if (!serverId) return;
-
-      // small randomized delay so reactions don't look robotic
-      const delay = Math.floor(Math.random() * 3000) + 1500;
-      await new Promise(r => setTimeout(r, delay));
-
-      const emoji = NEWSLETTER_REACTION_EMOJIS[Math.floor(Math.random() * NEWSLETTER_REACTION_EMOJIS.length)];
-      await conn.newsletterReactMessage(m.key.remoteJid, String(serverId), emoji);
-      console.log(`📰 Reacted ${emoji} to newsletter post in ${m.key.remoteJid}`);
-    } catch (err) {
-      // newsletter reactions are cosmetic — never let a failure here
-      // affect anything else
-      console.error('Newsletter auto-react error:', err.message);
-    }
-  });
-
   // ── Main message handler ─────────────────────────────────
   conn.ev.on('messages.upsert', async (chatUpdate) => {
     try {
       let m = chatUpdate.messages[0];
       if (!m.message) return;
-      if (m.key?.remoteJid === 'status@broadcast') return; // statuses handled above
+      if (m.key?.remoteJid === 'status@broadcast') return;
 
-      // Ignore protocol messages (edits, deletes, etc.) — these are not commands
+      // Ignore protocol messages
       if (m.message.protocolMessage) return;
 
-      // Increment message counter for this user (for admin dashboard)
+      // Increment message counter if Redis available
       try {
-        await redisClient.hIncrBy(`meta:${phoneNumber}`, 'messagesReceived', 1);
+        if (redisClient) {
+          await redisClient.hIncrBy(`meta:${phoneNumber}`, 'messagesReceived', 1);
+        }
       } catch {}
 
       m = smsg(conn, m);
@@ -714,7 +527,6 @@ async function startBot(phoneNumber, socket) {
   });
 
   // ── Anti-delete / Anti-edit ─────────────────────────────
-  // WhatsApp sends a protocol message when someone deletes or edits a message
   conn.ev.on('messages.update', async (updates) => {
     try {
       const { messageStore, getConfig } = require('./case');
@@ -725,7 +537,6 @@ async function startBot(phoneNumber, socket) {
       for (const update of updates) {
         const { key, update: msgUpdate } = update;
 
-        // ── Message deleted ──
         if (msgUpdate?.message === null) {
           const stored = messageStore.get(key.id);
           if (stored && stored.body) {
@@ -743,11 +554,6 @@ async function startBot(phoneNumber, socket) {
   });
 
   // ── Anti-call ────────────────────────────────────────────
-  // Automatically rejects incoming voice/video calls to the bot's number
-  // when enabled. A bot account receiving calls is almost always unwanted
-  // (spam, accidental calls, or someone testing if a "real person" picks
-  // up) — auto-rejecting keeps the account looking less suspicious to
-  // WhatsApp's automated-behavior detection too.
   conn.ev.on('call', async (calls) => {
     try {
       const { getConfig } = require('./case');
@@ -756,7 +562,7 @@ async function startBot(phoneNumber, socket) {
       if (!config.antiCall) return;
 
       for (const call of calls) {
-        if (call.status !== 'offer') continue; // only act on incoming call offers
+        if (call.status !== 'offer') continue;
 
         try {
           await conn.rejectCall(call.id, call.from);
@@ -779,9 +585,6 @@ async function startBot(phoneNumber, socket) {
   });
 
   // ── Anti-edit ────────────────────────────────────────────
-  // Edited messages can arrive as:
-  //  1) messages.upsert with protocolMessage.type === MESSAGE_EDIT
-  //  2) messages.update with message.editedMessage present
   conn.ev.on('messages.upsert', async (chatUpdate) => {
     try {
       const { getConfig } = require('./case');
@@ -804,8 +607,6 @@ async function startBot(phoneNumber, socket) {
           || editedMsg.editedMessage?.extendedTextMessage?.text
           || '(non-text content)';
 
-        // The protocol message itself doesn't carry sender/from in a usable
-        // form until processed by smsg(). Use the raw key fields directly.
         const editorJid = conn.decodeJid(m.key?.participant || m.key?.remoteJid);
         const chatJid = m.key?.remoteJid;
 
@@ -820,7 +621,6 @@ async function startBot(phoneNumber, socket) {
           stored.body = newText;
           messageStore.set(originalId, stored);
         } else if (chatJid) {
-          // We don't have the original cached — still notify with what we know
           const senderTag = editorJid ? `@${editorJid.split('@')[0]}` : 'Unknown';
           await conn.sendMessage(chatJid, {
             text: `🛡️ *Anti-Edit*\n\n${senderTag} edited a message:\n\n*After:* ${newText}\n\n(Original not found in cache)`,
@@ -833,244 +633,146 @@ async function startBot(phoneNumber, socket) {
     }
   });
 
-  // ── Reaction-based view-once revealer ──────────────────
-  // React to any message with 👁️ → bot silently DMs you the media.
-  // Sender sees nothing unusual — just your emoji reaction.
-  //
-  // messages.reaction event shape (per official Baileys docs):
-  //   reaction.key          — the reaction message itself (who reacted, which chat)
-  //   reaction.key.fromMe   — true if the session's own number reacted
-  //   reaction.key.participant — sender JID in group chats
-  //   reaction.reaction.key — the TARGET message being reacted to
-  //   reaction.reaction.text — the emoji used
-  conn.ev.on('messages.reaction', async (reactions) => {
-    try {
-      for (const reaction of reactions) {
-        // Only care about 👁️
-        const emoji = reaction.reaction?.text;
-        if (emoji !== '👁️') continue;
-
-        // Only fire when it's the session owner reacting
-        const isOwn = reaction.key?.fromMe;
-        const reactorRaw = reaction.key?.participant || reaction.key?.remoteJid || '';
-        const reactorJid = conn.decodeJid(reactorRaw);
-        const ownerJid = OWNER_NUMBER; // already has @s.whatsapp.net from line 38
-
-        if (!isOwn && reactorJid !== ownerJid) continue;
-
-        // The target message that was reacted to
-        const targetKey = reaction.reaction?.key;
-        if (!targetKey) continue;
-
-        // Look up the original message — in-memory store first
-        const { messageStore } = require('./case');
-        const stored = messageStore.get(targetKey.id);
-        let rawMessage = null;
-
-        if (stored?.message) {
-          rawMessage = stored;
-        } else {
-          // Fallback: try to load from Baileys' message store
-          try {
-            const msgs = await conn.loadMessages(targetKey.remoteJid, 1, {
-              before: { id: targetKey.id, fromMe: targetKey.fromMe }
-            });
-            const found = msgs?.messages?.find(m2 => m2.key?.id === targetKey.id);
-            if (found) rawMessage = found;
-          } catch {}
-        }
-
-        if (!rawMessage) {
-          console.log('[👁️] Message not in store, ID:', targetKey.id);
-          continue;
-        }
-
-        // Unwrap all known view-once wrapper shapes
-        const msg = rawMessage.message || rawMessage;
-        const rawViewOnce =
-          msg?.viewOnceMessageV2?.message ||
-          msg?.viewOnceMessageV2Extension?.message ||
-          msg?.viewOnceMessage?.message ||
-          (msg?.imageMessage?.viewOnce ? { imageMessage: msg.imageMessage } : null) ||
-          (msg?.videoMessage?.viewOnce ? { videoMessage: msg.videoMessage } : null) ||
-          (msg?.audioMessage ? { audioMessage: msg.audioMessage } : null);
-
-        if (!rawViewOnce) {
-          console.log('[👁️] No view-once content found in message');
-          continue;
-        }
-
-        const innerType = Object.keys(rawViewOnce)[0];
-        if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(innerType)) continue;
-
-        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-        const buffer = await downloadMediaMessage({ message: rawViewOnce }, 'buffer', {});
-        if (!buffer) continue;
-
-        const senderNum = targetKey.participant?.split('@')[0] || targetKey.remoteJid?.split('@')[0] || 'unknown';
-        const chatName = targetKey.remoteJid?.endsWith('@g.us') ? targetKey.remoteJid : 'DM';
-        const caption = `👁️ *View-once from +${senderNum}*\nChat: ${chatName}`;
-
-        if (innerType === 'imageMessage') {
-          await conn.sendMessage(ownerJid, { image: buffer, caption });
-        } else if (innerType === 'videoMessage') {
-          await conn.sendMessage(ownerJid, { video: buffer, caption });
-        } else if (innerType === 'audioMessage') {
-          await conn.sendMessage(ownerJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
-        }
-
-        console.log('[👁️] View-once delivered to owner DM');
-      }
-    } catch (err) {
-      console.error('Reaction view-once error:', err.message);
-    }
-  });
-
   // ── Group events ───────────────────────────────────────
   conn.ev.on('group-participants.update', async (update) => {
     const { id, participants, action, author } = update;
 
     try {
-        const { getConfig } = require('./case');
-        const groupmod = require('./groupmod');
-        const groupConfig = await groupmod.getGroupConfig(redisClient, id);
+      const { getConfig } = require('./case');
+      const groupmod = require('./groupmod');
+      const groupConfig = await groupmod.getGroupConfig(redisClient, id);
 
-        if (action === 'add') {
-            for (const participant of participants) {
-                // ── ANTIBOT: detect and auto-remove bot accounts on join ──
-                if (groupConfig.antibot !== 'off') {
-                    const numPart = participant.split('@')[0];
-                    const isLikelyBot = numPart.endsWith('0') && numPart.length <= 11;
-                    if (isLikelyBot) {
-                        let botCanKick = false;
-                        try {
-                            const groupMeta = await conn.groupMetadata(id);
-                            const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-                            botCanKick = botJid && groupMeta.participants.some(p =>
-                                p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
-                            );
-                        } catch {}
-                        if (botCanKick) {
-                            try {
-                                await conn.groupParticipantsUpdate(id, [participant], 'remove');
-                                await conn.sendMessage(id, {
-                                    text: `🤖 @${numPart} was removed — suspected bot account.`,
-                                    mentions: [participant]
-                                });
-                                continue;
-                            } catch {}
-                        }
-                    }
-                }
-
-                // ── WELCOME MESSAGE ──
-                if (groupConfig.welcomeEnabled) {
-                    try {
-                        const meta = await conn.groupMetadata(id);
-                        const memberCount = meta.participants.length;
-                        const tag = `@${participant.split('@')[0]}`;
-                        const customMsg = groupConfig.welcomeMsg
-                            ? groupConfig.welcomeMsg
-                                .replace(/{user}/gi, tag)
-                                .replace(/{group}/gi, meta.subject)
-                                .replace(/{members}/gi, memberCount)
-                            : `👋 Welcome ${tag} to *${meta.subject}*!\nWe now have ${memberCount} members.\n\nType .menu to see what I can do.`;
-
-                        // Try to fetch profile picture for welcome card
-                        let ppUrl = null;
-                        try { ppUrl = await conn.profilePictureUrl(participant, 'image'); } catch {}
-
-                        if (ppUrl) {
-                            const axios = require('axios');
-                            const imgRes = await axios.get(ppUrl, { responseType: 'arraybuffer', timeout: 10000 });
-                            await conn.sendMessage(id, {
-                                image: Buffer.from(imgRes.data),
-                                caption: customMsg,
-                                mentions: [participant]
-                            });
-                        } else {
-                            await conn.sendMessage(id, { text: customMsg, mentions: [participant] });
-                        }
-                    } catch (err) {
-                        console.error('Welcome message error:', err.message);
-                    }
-                }
-            }
-        } else if (action === 'remove') {
-            for (const participant of participants) {
-                if (groupConfig.goodbyeEnabled) {
-                    try {
-                        const meta = await conn.groupMetadata(id).catch(() => ({ subject: 'the group' }));
-                        const tag = `@${participant.split('@')[0]}`;
-                        const customMsg = groupConfig.goodbyeMsg
-                            ? groupConfig.goodbyeMsg
-                                .replace(/{user}/gi, tag)
-                                .replace(/{group}/gi, meta.subject)
-                            : `🚪 ${tag} has left. Goodbye! 👋`;
-
-                        await conn.sendMessage(id, { text: customMsg, mentions: [participant] });
-                    } catch (err) {
-                        console.error('Goodbye message error:', err.message);
-                    }
-                }
-            }
-        } else if (action === 'promote') {
-            // ── ANTIPROMOTE: revert unauthorized admin promotions ──
-            if (groupConfig.antipromote) {
-                let botCanAdmin = false;
+      if (action === 'add') {
+        for (const participant of participants) {
+          if (groupConfig.antibot !== 'off') {
+            const numPart = participant.split('@')[0];
+            const isLikelyBot = numPart.endsWith('0') && numPart.length <= 11;
+            if (isLikelyBot) {
+              let botCanKick = false;
+              try {
+                const groupMeta = await conn.groupMetadata(id);
+                const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
+                botCanKick = botJid && groupMeta.participants.some(p =>
+                  p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
+                );
+              } catch {}
+              if (botCanKick) {
                 try {
-                    const groupMeta = await conn.groupMetadata(id);
-                    const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-                    botCanAdmin = botJid && groupMeta.participants.some(p =>
-                        p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
-                    );
+                  await conn.groupParticipantsUpdate(id, [participant], 'remove');
+                  await conn.sendMessage(id, {
+                    text: `🤖 @${numPart} was removed — suspected bot account.`,
+                    mentions: [participant]
+                  });
+                  continue;
                 } catch {}
-                if (botCanAdmin && author) {
-                    const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-                    const authorIsBot = botJid && (author === botJid || author?.startsWith(botJid.split('@')[0]));
-                    if (!authorIsBot) {
-                        for (const participant of participants) {
-                            try {
-                                await conn.groupParticipantsUpdate(id, [participant], 'demote');
-                                await conn.sendMessage(id, {
-                                    text: `⚠️ Unauthorized promotion of @${participant.split('@')[0]} was reverted. Antipromote is enabled.`,
-                                    mentions: [participant]
-                                });
-                            } catch {}
-                        }
-                    }
-                }
+              }
             }
-        } else if (action === 'demote') {
-            // ── ANTIDEMOTE: revert unauthorized admin demotions ──
-            if (groupConfig.antidemote) {
-                let botCanAdmin = false;
-                try {
-                    const groupMeta = await conn.groupMetadata(id);
-                    const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-                    botCanAdmin = botJid && groupMeta.participants.some(p =>
-                        p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
-                    );
-                } catch {}
-                if (botCanAdmin && author) {
-                    const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
-                    const authorIsBot = botJid && (author === botJid || author?.startsWith(botJid.split('@')[0]));
-                    if (!authorIsBot) {
-                        for (const participant of participants) {
-                            try {
-                                await conn.groupParticipantsUpdate(id, [participant], 'promote');
-                                await conn.sendMessage(id, {
-                                    text: `⚠️ Unauthorized demotion of @${participant.split('@')[0]} was reverted. Antidemote is enabled.`,
-                                    mentions: [participant]
-                                });
-                            } catch {}
-                        }
-                    }
-                }
+          }
+
+          if (groupConfig.welcomeEnabled) {
+            try {
+              const meta = await conn.groupMetadata(id);
+              const memberCount = meta.participants.length;
+              const tag = `@${participant.split('@')[0]}`;
+              const customMsg = groupConfig.welcomeMsg
+                ? groupConfig.welcomeMsg
+                  .replace(/{user}/gi, tag)
+                  .replace(/{group}/gi, meta.subject)
+                  .replace(/{members}/gi, memberCount)
+                : `👋 Welcome ${tag} to *${meta.subject}*!\nWe now have ${memberCount} members.\n\nType .menu to see what I can do.`;
+
+              let ppUrl = null;
+              try { ppUrl = await conn.profilePictureUrl(participant, 'image'); } catch {}
+
+              if (ppUrl) {
+                const axios = require('axios');
+                const imgRes = await axios.get(ppUrl, { responseType: 'arraybuffer', timeout: 10000 });
+                await conn.sendMessage(id, {
+                  image: Buffer.from(imgRes.data),
+                  caption: customMsg,
+                  mentions: [participant]
+                });
+              } else {
+                await conn.sendMessage(id, { text: customMsg, mentions: [participant] });
+              }
+            } catch (err) {
+              console.error('Welcome message error:', err.message);
             }
+          }
         }
+      } else if (action === 'remove') {
+        for (const participant of participants) {
+          if (groupConfig.goodbyeEnabled) {
+            try {
+              const meta = await conn.groupMetadata(id).catch(() => ({ subject: 'the group' }));
+              const tag = `@${participant.split('@')[0]}`;
+              const customMsg = groupConfig.goodbyeMsg
+                ? groupConfig.goodbyeMsg
+                  .replace(/{user}/gi, tag)
+                  .replace(/{group}/gi, meta.subject)
+                : `🚪 ${tag} has left. Goodbye! 👋`;
+
+              await conn.sendMessage(id, { text: customMsg, mentions: [participant] });
+            } catch (err) {
+              console.error('Goodbye message error:', err.message);
+            }
+          }
+        }
+      } else if (action === 'promote') {
+        if (groupConfig.antipromote) {
+          let botCanAdmin = false;
+          try {
+            const groupMeta = await conn.groupMetadata(id);
+            const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
+            botCanAdmin = botJid && groupMeta.participants.some(p =>
+              p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
+            );
+          } catch {}
+          if (botCanAdmin && author) {
+            const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
+            const authorIsBot = botJid && (author === botJid || author?.startsWith(botJid.split('@')[0]));
+            if (!authorIsBot) {
+              for (const participant of participants) {
+                try {
+                  await conn.groupParticipantsUpdate(id, [participant], 'demote');
+                  await conn.sendMessage(id, {
+                    text: `⚠️ Unauthorized promotion of @${participant.split('@')[0]} was reverted. Antipromote is enabled.`,
+                    mentions: [participant]
+                  });
+                } catch {}
+              }
+            }
+          }
+        }
+      } else if (action === 'demote') {
+        if (groupConfig.antidemote) {
+          let botCanAdmin = false;
+          try {
+            const groupMeta = await conn.groupMetadata(id);
+            const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
+            botCanAdmin = botJid && groupMeta.participants.some(p =>
+              p.jid === botJid && (p.admin === 'admin' || p.admin === 'superadmin')
+            );
+          } catch {}
+          if (botCanAdmin && author) {
+            const botJid = conn.user?.id ? conn.decodeJid(conn.user.id) : null;
+            const authorIsBot = botJid && (author === botJid || author?.startsWith(botJid.split('@')[0]));
+            if (!authorIsBot) {
+              for (const participant of participants) {
+                try {
+                  await conn.groupParticipantsUpdate(id, [participant], 'promote');
+                  await conn.sendMessage(id, {
+                    text: `⚠️ Unauthorized demotion of @${participant.split('@')[0]} was reverted. Antidemote is enabled.`,
+                    mentions: [participant]
+                  });
+                } catch {}
+              }
+            }
+          }
+        }
+      }
     } catch (err) {
-        console.error('group-participants.update handler error:', err.message);
+      console.error('group-participants.update handler error:', err.message);
     }
   });
 
@@ -1078,12 +780,12 @@ async function startBot(phoneNumber, socket) {
 }
 
 /**
- * Run a backup snapshot now (used by the 30-min interval AND the
- * .autobackup manual trigger command). Lightweight — stores summary
- * metadata only, not full session creds.
+ * Run a backup snapshot now (optional - only if Redis available)
  */
 async function runBackup() {
   const redisClient = await getRedis();
+  if (!redisClient) return 0;
+
   const phoneNumbers = await redisClient.sMembers('users:all');
   const snapshot = [];
 
@@ -1102,21 +804,10 @@ async function runBackup() {
   return snapshot.length;
 }
 
-// ── Newsletter stats snapshotting ──────────────────────────
-// Periodically records subscriber counts (for growth tracking) and a
-// "most reacted posts" leaderboard for every admin-configured channel.
-// Uses whichever session happens to be connected — newsletter data is
-// public/account-agnostic, so any live connection can fetch it.
-//
-// CAVEAT: Baileys' public docs don't clearly document the exact field
-// name for a post's reaction count on newsletterFetchMessages results,
-// so extractReactionCount() below checks several plausible field names
-// defensively. If the admin dashboard's "most reacted" numbers look
-// wrong/always-zero after deploying, that's the first place to check —
-// log a raw message object and see what field actually holds the count.
+// ── Newsletter stats snapshotting (optional - only if Redis available) ──
 const NEWSLETTER_HISTORY_PREFIX = 'newsletter:history:';
 const NEWSLETTER_TOPPOSTS_PREFIX = 'newsletter:topposts:';
-const NEWSLETTER_HISTORY_CAP = 60; // ~60 snapshots of history retained
+const NEWSLETTER_HISTORY_CAP = 60;
 
 function extractReactionCount(msg) {
   return msg?.reactionCounts?.total ?? msg?.reactionMetadata?.count ?? msg?.reaction_metadata?.count ??
@@ -1131,6 +822,8 @@ function extractPostText(msg) {
 
 async function snapshotNewsletterStats() {
   const redisClient = await getRedis();
+  if (!redisClient) return;
+
   const settings = await getSettings();
   const channels = settings.newsletterChannels || [];
   if (!channels.length) return;
@@ -1170,19 +863,21 @@ async function snapshotNewsletterStats() {
     } catch (err) {
       console.error(`Newsletter stats snapshot failed for ${jid}:`, err.message);
     }
-    await new Promise(r => setTimeout(r, 1500)); // gentle pacing between channels
+    await new Promise(r => setTimeout(r, 1500));
   }
 }
 
 async function getNewsletterStats() {
   const redisClient = await getRedis();
+  if (!redisClient) return [];
+
   const settings = await getSettings();
   const channels = settings.newsletterChannels || [];
 
   const results = [];
   for (const jid of channels) {
     const historyRaw = await redisClient.lRange(NEWSLETTER_HISTORY_PREFIX + jid, 0, NEWSLETTER_HISTORY_CAP - 1);
-    const history = historyRaw.map(r => JSON.parse(r)); // newest first
+    const history = historyRaw.map(r => JSON.parse(r));
     const current = history[0]?.subscribers ?? null;
 
     const findClosestTo = (targetMs) => {
@@ -1248,10 +943,10 @@ function smsg(conn, m) {
 
     m.body =
       m.mtype === 'conversation' ? m.message.conversation
-      : m.mtype === 'imageMessage' ? m.message.imageMessage.caption
-      : m.mtype === 'videoMessage' ? m.message.videoMessage.caption
-      : m.mtype === 'extendedTextMessage' ? m.message.extendedTextMessage.text
-      : '';
+        : m.mtype === 'imageMessage' ? m.message.imageMessage.caption
+          : m.mtype === 'videoMessage' ? m.message.videoMessage.caption
+            : m.mtype === 'extendedTextMessage' ? m.message.extendedTextMessage.text
+              : '';
 
     m.mentionedJid = m.msg?.contextInfo?.mentionedJid || [];
 
